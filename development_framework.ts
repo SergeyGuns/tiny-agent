@@ -94,7 +94,7 @@ export class DeveloperAgent {
   private history: Message[] = [];
   private logger = new AgentLogger();
 
-  constructor(private apiKey: string, private maxSteps = 5) {
+  constructor(private maxSteps = 5) {
     this.history.push({
       role: 'system',
       content: `Вы — инженер-разработчик. Выполняйте задачу строго по шагам.
@@ -135,7 +135,7 @@ Action: имя_инструмента[{"ключ": "значение"}]
 export class SupervisorAgent {
   private logger = new AgentLogger();
 
-  constructor(private apiKey: string) {}
+  constructor() {}
 
   async evaluateSession(originalQuery: string): Promise<{ decision: 'commit' | 'rollback' | 'retry'; reason: string }> {
     const sessionLogs = this.logger.readFullLog();
@@ -173,7 +173,8 @@ ${sessionLogs}`;
 
 // --- 3. ОРКЕСТРАТОР СИСТЕМЫ (MAIN RUNNER) ---
 async function startPipeline(userTask: string) {
-  const apiKey = process.env.OPENAI_API_KEY || '';
+  const baseUrl = process.env.LM_STUDIO_URL || 'http://localhost:1234/v1';
+  const modelName = process.env.LM_STUDIO_MODEL || 'local-model';
   const logger = new AgentLogger();
   logger.clear();
 
@@ -186,10 +187,10 @@ async function startPipeline(userTask: string) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     console.log(`\n${C.blue}${C.bright}📦 Попытка Разработчика #${attempt}${C.reset}`);
     
-    const dev = new DeveloperAgent(apiKey);
+    const dev = new DeveloperAgent();
     await dev.run(userTask, feedback);
 
-    const supervisor = new SupervisorAgent(apiKey);
+    const supervisor = new SupervisorAgent();
     const evaluation = await supervisor.evaluateSession(userTask);
 
     if (evaluation.decision === 'commit') {

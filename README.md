@@ -49,7 +49,8 @@ npm install
 ### 3. Настройка окружения
 Создайте переменные окружения для доступа к моделям и поиску:
 ```bash
-export OPENAI_API_KEY="ваш_ключ_openai"
+export LM_STUDIO_URL="http://localhost:1234/v1"
+export LM_STUDIO_MODEL="local-model"
 export SERPER_API_KEY="ваш_ключ_serper_для_web_search"
 ```
 
