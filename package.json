@@ -1,17 +1,19 @@
 {
   "name": "tiny-agent",
   "version": "1.0.0",
-  "description": "",
+  "type": "module",
   "license": "ISC",
-  "author": "",
-  "type": "commonjs",
-  "main": "index.js",
   "scripts": {
     "build": "tsc",
-    "start": "tsc && node dist/index.js",
-    "tui": "npx tsc && node dist/agent.js",
-    "dev": "npx tsc && node dist/development_framework.js",
-    "clean": "node -e \"const fs = require('fs'); ['dist', 'session.log'].forEach(p => fs.existsSync(p) && fs.rmSync(p, {recursive: true}))\""
+    "start": "tsc && node dist/agent.js",
+    "tui": "tsc && node dist/agent.js",
+    "dev": "tsc && node dist/development_framework.js",
+    "clean": "node -e \"const fs = require('fs'); ['dist', 'session.log', 'bench-report.json'].forEach(p => fs.existsSync(p) && fs.rmSync(p, {recursive: true}))\"",
+    "test": "npx tsc && node --test dist/test/*.test.js",
+    "bench": "npx tsc && node dist/bench/runner.js",
+    "bench:unit": "npm test",
+    "bench:category": "npx tsc && node dist/bench/runner.js --category",
+    "bench:task": "npx tsc && node dist/bench/runner.js --task"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
