@@ -100,76 +100,30 @@ export function parseDdgHtml(html: string, maxResults: number): DdgResult[] {
 }
 
 async function searchDuckDuckGo(query: string, numResults: number): Promise<DdgResult[]> {
-  // Wikipedia Search API — надёжный, без CAPTCHA, работает с любыми языками
-  // Wikipedia автоматически находит статьи на разных языках
-  const searchUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&srlimit=${numResults}&origin=*`;
+  const enQuery = query
+    .replace(/основные различия/gi, 'differences between')
+    .replace(/преимущества/gi, 'advantages').replace(/недостатки/gi, 'disadvantages')
+    .replace(/сравнительный анализ/gi, 'comparison').replace(/столица/gi, 'capital')
+    .replace(/население/gi, 'population').replace(/страны/gi, 'countries')
+    .replace(/практики/gi, 'best practices').replace(/работы с/gi, 'working with')
+    .replace(/последний релиз/gi, 'latest release').replace(/версия/gi, 'version')
+    .replace(/дата/gi, 'date').replace(/текущая/gi, 'current')
+    .replace(/информация/gi, 'information').replace(/найди/gi, 'find')
+    .replace(/список/gi, 'list').replace(/топ/gi, 'top');
 
-  const res = await fetch(searchUrl, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TinyAgent/1.0)' },
-    signal: AbortSignal.timeout(15000)
-  });
-
-  if (!res.ok) {
-    throw new Error(`Wikipedia search returned ${res.status}`);
-  }
-
-  const data = await res.json() as any;
-  const results: DdgResult[] = [];
-
-  const searchResults = data?.query?.search || [];
-  for (const r of searchResults) {
-    const title = (r.title as string).replace(/<[^>]+>/g, '');
-    const snippet = (r.snippet as string).replace(/<[^>]+>/g, '').substring(0, 200);
-    results.push({
-      title,
-      url: `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, '_'))}`,
-      snippet,
-    });
-  }
-
-  // Fallback: если результатов нет — пробуем английский перевод ключевых слов
-  if (results.length === 0) {
-    const enQuery = query
-      .replace(/основные различия/gi, 'differences between')
-      .replace(/преимущества/gi, 'advantages')
-      .replace(/недостатки/gi, 'disadvantages')
-      .replace(/сравнительный анализ/gi, 'comparison')
-      .replace(/столица/gi, 'capital')
-      .replace(/население/gi, 'population')
-      .replace(/страны/gi, 'countries')
-      .replace(/практики/gi, 'best practices')
-      .replace(/работы с/gi, 'working with')
-      .replace(/последний релиз/gi, 'latest release')
-      .replace(/версия/gi, 'version')
-      .replace(/дата/gi, 'date')
-      .replace(/текущая/gi, 'current')
-      .replace(/информация/gi, 'information')
-      .replace(/найди/gi, 'find')
-      .replace(/список/gi, 'list')
-      .replace(/топ/gi, 'top');
-
-    if (enQuery !== query) {
-      const searchUrl2 = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(enQuery)}&format=json&srlimit=${numResults}&origin=*`;
-      const res2 = await fetch(searchUrl2, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TinyAgent/1.0)' },
-        signal: AbortSignal.timeout(15000)
-      });
-      if (res2.ok) {
-        const data2 = await res2.json() as any;
-        for (const r of (data2?.query?.search || [])) {
-          const title = (r.title as string).replace(/<[^>]+>/g, '');
-          const snippet = (r.snippet as string).replace(/<[^>]+>/g, '').substring(0, 200);
-          results.push({
-            title,
-            url: `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, '_'))}`,
-            snippet,
-          });
-        }
-      }
+  try {
+    const url = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(enQuery)}&format=json&srlimit=${numResults}&origin=*`;
+    const res = await fetch(url, { headers: { 'User-Agent': 'TinyAgent/10 (github.com/SergeyGuns/tiny-agent)' }, signal: AbortSignal.timeout(15000) });
+    if (res.ok) {
+      const data = await res.json() as any;
+      return (data?.query?.search || []).slice(0, numResults).map((x: any) => ({
+        title: (x.title as string).replace(/<[^>]+>/g, ''),
+        url: `https://en.wikipedia.org/wiki/${encodeURIComponent((x.title as string).replace(/ /g, '_'))}`,
+        snippet: (x.snippet as string).replace(/<[^>]+>/g, '').substring(0, 250),
+      }));
     }
-  }
-
-  return results;
+  } catch {}
+  return [];
 }
 
 // --- ИНСТРУМЕНТЫ ---
