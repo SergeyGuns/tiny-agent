@@ -128,7 +128,6 @@ function collectWrittenFiles(workDir: string): Map<string, string> {
 // ─── Выполнение одной задачи ──────────────────────────────────
 
 async function executeTask(task: Task, maxSteps = 15): Promise<TaskResult> {
-  // v7: Адаптивный maxSteps по сложности (Гипотеза 2)
   const adaptiveSteps = task.difficulty === 'expert' ? 25 : task.difficulty === 'hard' ? 20 : maxSteps;
   const workDir = mkdtempSync(path.join(tmpdir(), `bench-${task.id}-`));
   const toolRecords: ToolCallRecord[] = [];
@@ -137,18 +136,28 @@ async function executeTask(task: Task, maxSteps = 15): Promise<TaskResult> {
   const origCwd = process.cwd();
   process.chdir(workDir);
 
-  // v8: Адаптивный таймаут по сложности
-  const taskTimeout = task.difficulty === 'expert' ? 600000 : task.difficulty === 'hard' ? 420000 : 300000;
+  const taskTimeout = task.difficulty === 'expert' ? 900000 : task.difficulty === 'hard' ? 600000 : 420000;
 
   try {
     await prepareTask(task, workDir);
 
-    // v7: Двухфазное планирование убрано — агенты игнорируют его (Гипотеза 1)
-
     const timeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error(`Таймаут задачи (${taskTimeout / 1000}s)`)), taskTimeout)
     );
-    const runPromise = runReActLoop(task.prompt, adaptiveSteps);
+    const runPromise = runReActLoop(task.prompt, adaptiveSteps, {
+      onStep: (step, response) => {
+        const preview = response.substring(0, 120).replace(/\n/g, ' ');
+        console.log(`    ${C.dim}step ${step}: ${preview}...${C.reset}`);
+      },
+      onToolCall: (step, tool, args, result) => {
+        const argsStr = JSON.stringify(args).substring(0, 80);
+        const resultStr = result.substring(0, 60).replace(/\n/g, ' ');
+        console.log(`    ${C.cyan}${tool}${C.reset}(${argsStr}) → ${resultStr}`);
+      },
+      onComplete: (steps) => {
+        console.log(`    ${C.dim}loop completed: ${steps} steps${C.reset}`);
+      },
+    });
 
     const { steps, toolCalls } = await Promise.race([runPromise, timeoutPromise]);
 
@@ -233,9 +242,9 @@ async function runBenchmark(opts: RunOptions = {}): Promise<BenchmarkReport> {
     const result = await executeTask(task, maxSteps);
     results.push(result);
 
-    // Cooldown между задачами чтобы LM Studio не перегружался (v7: уменьшен до 2s)
+    // Cooldown между задачами чтобы LM Studio не перегружался (v9: уменьшен до 1s)
     if (i < tasks.length - 1) {
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, 1000));
     }
 
     if (verbose) {

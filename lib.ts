@@ -100,24 +100,76 @@ export function parseDdgHtml(html: string, maxResults: number): DdgResult[] {
 }
 
 async function searchDuckDuckGo(query: string, numResults: number): Promise<DdgResult[]> {
-  // DuckDuckGo HTML endpoint — не требует JS, отдаёт результаты в чистом HTML
-  const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+  // Wikipedia Search API — надёжный, без CAPTCHA, работает с любыми языками
+  // Wikipedia автоматически находит статьи на разных языках
+  const searchUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&srlimit=${numResults}&origin=*`;
 
-  const res = await fetch(ddgUrl, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml',
-      'Accept-Language': 'en-US,en;q=0.9',
-    },
+  const res = await fetch(searchUrl, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TinyAgent/1.0)' },
     signal: AbortSignal.timeout(15000)
   });
 
   if (!res.ok) {
-    throw new Error(`DuckDuckGo returned ${res.status}`);
+    throw new Error(`Wikipedia search returned ${res.status}`);
   }
 
-  const html = await res.text();
-  return parseDdgHtml(html, numResults);
+  const data = await res.json() as any;
+  const results: DdgResult[] = [];
+
+  const searchResults = data?.query?.search || [];
+  for (const r of searchResults) {
+    const title = (r.title as string).replace(/<[^>]+>/g, '');
+    const snippet = (r.snippet as string).replace(/<[^>]+>/g, '').substring(0, 200);
+    results.push({
+      title,
+      url: `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, '_'))}`,
+      snippet,
+    });
+  }
+
+  // Fallback: если результатов нет — пробуем английский перевод ключевых слов
+  if (results.length === 0) {
+    const enQuery = query
+      .replace(/основные различия/gi, 'differences between')
+      .replace(/преимущества/gi, 'advantages')
+      .replace(/недостатки/gi, 'disadvantages')
+      .replace(/сравнительный анализ/gi, 'comparison')
+      .replace(/столица/gi, 'capital')
+      .replace(/население/gi, 'population')
+      .replace(/страны/gi, 'countries')
+      .replace(/практики/gi, 'best practices')
+      .replace(/работы с/gi, 'working with')
+      .replace(/последний релиз/gi, 'latest release')
+      .replace(/версия/gi, 'version')
+      .replace(/дата/gi, 'date')
+      .replace(/текущая/gi, 'current')
+      .replace(/информация/gi, 'information')
+      .replace(/найди/gi, 'find')
+      .replace(/список/gi, 'list')
+      .replace(/топ/gi, 'top');
+
+    if (enQuery !== query) {
+      const searchUrl2 = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(enQuery)}&format=json&srlimit=${numResults}&origin=*`;
+      const res2 = await fetch(searchUrl2, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TinyAgent/1.0)' },
+        signal: AbortSignal.timeout(15000)
+      });
+      if (res2.ok) {
+        const data2 = await res2.json() as any;
+        for (const r of (data2?.query?.search || [])) {
+          const title = (r.title as string).replace(/<[^>]+>/g, '');
+          const snippet = (r.snippet as string).replace(/<[^>]+>/g, '').substring(0, 200);
+          results.push({
+            title,
+            url: `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, '_'))}`,
+            snippet,
+          });
+        }
+      }
+    }
+  }
+
+  return results;
 }
 
 // --- ИНСТРУМЕНТЫ ---
@@ -222,7 +274,7 @@ export const tools: Record<string, ToolFunction> = {
   },
   runCommand: async (args: Record<string, unknown>) => {
     try {
-      const cmd = args.command as string;
+      const cmd = (args.command || args.cmd) as string;
       if (!cmd || typeof cmd !== 'string') return 'Ошибка: команда не указана';
       // Запрещаем опасные команды
       const blocked = ['rm -rf /', 'sudo', 'chmod 777', 'mkfs', 'dd ', 'shutdown', 'reboot', '> /dev'];
@@ -342,7 +394,36 @@ all_users.json создан ✓ Задача завершена.
 Задача: Найди все строки с "error" в log.txt
 Action: grep[{"pattern": "error", "files": "log.txt"}]
 Observation: line 3: error: connection failed
-line 7: error: timeout`;
+line 7: error: timeout
+
+Пример 7 — создание структуры файлов (ТИПИЧНЫЙ ПАТТЕРН):
+Задача: Создай структуру: config/settings.json, src/index.ts, README.md
+Action: writeFile[{"path": "config/settings.json", "content": "{\"debug\": true, \"port\": 3000}"}]
+Observation: Файл успешно записан
+[Чеклист: config/settings.json ✓ | src/index.ts ✗ | README.md ✗]
+Action: writeFile[{"path": "src/index.ts", "content": "export const main = () => { console.log('hello') }"}]
+Observation: Файл успешно записан
+[Чеклист: config/settings.json ✓ | src/index.ts ✓ | README.md ✗]
+Action: writeFile[{"path": "README.md", "content": "# My Project"}]
+Observation: Файл успешно записан
+[Чеклист: config/settings.json ✓ | src/index.ts ✓ | README.md ✓]
+Все файлы созданы ✓ Задача завершена.
+
+Пример 8 — план + выполнение (НЕ ОСТАНАВЛИВАЙТЕСЬ НА ПЛАНЕ!):
+Задача: Создай план и файлы для todo-приложения
+Action: writeFile[{"path": "PLAN.md", "content": "# Todo App\n## Структура\n- index.html\n- style.css\n- app.js"}]
+Observation: Файл успешно записан
+[План создан ✓ | index.html ✗ | style.css ✗ | app.js ✗]
+Action: writeFile[{"path": "index.html", "<!DOCTYPE html><html><head><link rel=\"stylesheet\" href=\"style.css\"></head><body><div id=\"app\"></div><script src=\"app.js\"></script></body></html>"}]
+Observation: Файл успешно записан
+[План ✓ | index.html ✓ | style.css ✗ | app.js ✗]
+Action: writeFile[{"path": "style.css", "content": "body { font-family: sans-serif; }"}]
+Observation: Файл успешно записан
+[План ✓ | index.html ✓ | style.css ✓ | app.js ✗]
+Action: writeFile[{"path": "app.js", "content": "const tasks = []; function addTask(t) { tasks.push(t); }"}]
+Observation: Файл успешно записан
+[План ✓ | index.html ✓ | style.css ✓ | app.js ✓]
+Все файлы созданы ✓ Задача завершена.`;
 
 export interface ReActCallbacks {
   onStep?: (step: number, response: string) => void;
@@ -364,6 +445,7 @@ export async function runReActLoop(
   const filesCreated: string[] = [];
   let lastSummaryAt = 0;
   let lastReadStep = 0; // шаг последнего readDir/readFile
+  let emptySteps = 0; // счётчик шагов без Action
 
   for (let step = 1; step <= maxSteps; step++) {
     const response = await queryLLM(history);
@@ -372,15 +454,23 @@ export async function runReActLoop(
 
     const action = parseAction(response);
     if (!action) {
-      // Если это первый шаг и модель не вызвала инструмент — подталкиваем
-      if (step === 1) {
+      emptySteps++;
+      // Если модель 3+ шага не вызывает инструмент — подталкиваем
+      if (emptySteps >= 3) {
         history.push({ role: 'user',
-          content: 'Вы не вызвали инструмент. Начните с первого действия — вызовите нужный инструмент в формате Action: имя[{}]' });
+          content: `ВНИМАНИЕ: вы уже ${emptySteps} шага не вызываете инструмент! Немедленно выполните действие через Action: имя[{"ключ": "значение"}]. Если вы завершили задачу — запишите результат в файл через writeFile.` });
+        emptySteps = 0;
+        continue;
+      }
+      if (step <= 3) {
+        history.push({ role: 'user',
+          content: `ВЫ НЕ ВЫЗВАЛИ ИНСТРУМЕНТ! Это шаг ${step}. Вызовите инструмент прямо сейчас в формате: Action: имя[{"ключ": "значение"}]. Например: Action: writeFile[{"path": "output.txt", "content": "hello"}]` });
         continue;
       }
       callbacks?.onComplete?.(step);
       return { steps: step, toolCalls };
     }
+    emptySteps = 0; // сбрасываем счётчик при успешном Action
 
     if (action.args.error) {
       history.push({ role: 'user', content: 'Observation: Ошибка аргументов.' });
@@ -403,7 +493,6 @@ export async function runReActLoop(
     }
     const durationMs = Date.now() - start;
 
-    // Обрезаем длинные результаты чтобы экономить контекст
     const truncatedResult = result.length > 800
       ? result.substring(0, 800) + `\n... [обрезано, всего ${result.length} символов]`
       : result;
@@ -509,7 +598,7 @@ export interface ToolCallRecord {
   durationMs: number;
 }
 
-export async function queryLLM(messages: Message[], retries = 3): Promise<string> {
+export async function queryLLM(messages: Message[], retries = 5): Promise<string> {
   const baseUrl = process.env.LM_STUDIO_URL || 'http://localhost:1234/v1';
   const modelName = process.env.LM_STUDIO_MODEL || 'local-model';
 
@@ -519,20 +608,26 @@ export async function queryLLM(messages: Message[], retries = 3): Promise<string
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: modelName, messages, temperature: 0.7 }),
-        signal: AbortSignal.timeout(120000),
+        signal: AbortSignal.timeout(300000),
       });
 
       if (!response.ok) {
         const text = await response.text().catch(() => '');
+        // Model not loaded yet — retry with backoff
+        if (text.includes('Model is unloaded') || text.includes('Failed to load model') || text.includes('No models loaded')) {
+          if (attempt < retries) {
+            await sleep(10000 * attempt);
+            continue;
+          }
+        }
         throw new Error(`HTTP ${response.status}: ${text.substring(0, 200)}`);
       }
 
       const data = await response.json() as any;
 
       if (!data.choices?.[0]?.message?.content) {
-        // Модель вернула пустой ответ — возможно overloaded
         if (attempt < retries) {
-          await sleep(2000 * attempt);
+          await sleep(5000 * attempt);
           continue;
         }
         throw new Error('Модель вернула пустой ответ');
@@ -541,7 +636,7 @@ export async function queryLLM(messages: Message[], retries = 3): Promise<string
       return data.choices[0].message.content;
     } catch (e: any) {
       if (attempt < retries) {
-        await sleep(2000 * attempt);
+        await sleep(5000 * attempt);
         continue;
       }
       throw e;
