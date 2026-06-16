@@ -65,7 +65,7 @@ export async function runReActLoop(
 
       // v10c-fix: Research task with NO Action on early steps — strong nudge with example
       if (step <= 2 && emptySteps >= 1) {
-        const isResearchTask = isResearchPrompt(userPrompt);
+        const isResearchTask = await isResearchPrompt(userPrompt);
         if (isResearchTask) {
           history.push({ role: 'user',
             content: `ВНИМАНИЕ! Вы НЕ вызвали инструмент! НЕМЕДЛЕННО вызовите инструмент! Пример: Action: webSearch[{"query": "Docker vs Podman differences"}]  Используйте-webSearch!` });
@@ -98,7 +98,7 @@ export async function runReActLoop(
 
     // v10c: Research task detected — push for immediate webSearch on step 1
     if (step === 1 && filesCreated.length === 0) {
-      if (isResearchPrompt(userPrompt) && action.name !== 'webSearch' && action.name !== 'fetch') {
+      if (await isResearchPrompt(userPrompt) && action.name !== 'webSearch' && action.name !== 'fetch') {
         const searchQuery = userPrompt.substring(0, 100).replace(/\n/g, ' ');
         history.push({ role: 'user',
           content: `ВНИМАНИЕ! Начните с поиска! Используйте: Action: webSearch[{"query": "${searchQuery}"}]  НЕ читайте файлы — сначала поиск!` });
@@ -304,11 +304,8 @@ export async function runReActLoop(
 
 // ─── Helper: detect research prompts ───────────────────────────
 
-function isResearchPrompt(prompt: string): boolean {
-  return prompt.includes('различия') || prompt.includes('различия между') ||
-    prompt.includes('сравни') || prompt.includes('сравнение') ||
-    prompt.includes('Docker') || prompt.includes('Podman') ||
-    prompt.includes('PostgreSQL') || prompt.includes('MongoDB') ||
-    prompt.includes('Git') || prompt.includes('best practice') ||
-    prompt.includes('лучшие практики') || prompt.includes('best practices');
+export async function isResearchPrompt(prompt: string): Promise<boolean> {
+  const systemPrompt = "You are a classifier. Determine if the following user prompt is a research task that requires external search or factual verification. Answer only YES or NO.";
+  const response = await queryLLM([{ role: "user", content: systemPrompt + "\n\nPrompt: " + prompt }]);
+  return response.trim().toUpperCase() === "YES";
 }
