@@ -6,8 +6,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { runReActLoop, queryLLM, type ToolCallRecord } from '../lib.js';
+import { runReActLoop, queryLLM, loadEnv } from '../lib.js';
 import { allTasks } from './tasks/index.js';
+import type { ToolCallRecord } from '../types.js';
 import type {
   Task,
   TaskResult,
@@ -208,6 +209,7 @@ interface RunOptions {
 }
 
 async function runBenchmark(opts: RunOptions = {}): Promise<BenchmarkReport> {
+  loadEnv();
   const { categories, difficulties, taskIds, maxSteps = 15, verbose = true } = opts;
 
   let tasks = allTasks;
@@ -344,7 +346,7 @@ function printReport(report: BenchmarkReport): void {
   console.log('');
 
   console.log(`  ${C.bright}ПО КАТЕГОРИЯМ:${C.reset}`);
-  const catNames: Record<Category, string> = { terminal: 'Terminal', tool_use: 'Tool Use', research: 'Research', planning: 'Planning' };
+  const catNames: Record<Category, string> = { terminal: 'Terminal', tool_use: 'Tool Use', research: 'Research', planning: 'Planning', rlm: 'RLM' };
   for (const [cat, s] of Object.entries(report.byCategory) as [Category, CategorySummary][]) {
     const color = s.percentage >= 80 ? C.green : s.percentage >= 50 ? C.yellow : C.red;
     const bar = '█'.repeat(Math.round(s.percentage / 5)).padEnd(20, '░');

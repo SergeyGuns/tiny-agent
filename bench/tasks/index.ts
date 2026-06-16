@@ -3,12 +3,14 @@ import { terminalTasks } from './terminal.js';
 import { toolUseTasks } from './tool-use.js';
 import { researchTasks } from './research.js';
 import { planningTasks } from './planning.js';
+import { rlmTasks } from './rlm.js';
 
 export const allTasks: Task[] = [
   ...terminalTasks,
   ...toolUseTasks,
   ...researchTasks,
   ...planningTasks,
+  ...rlmTasks,
 ];
 
 export function getTaskById(id: string): Task | undefined {

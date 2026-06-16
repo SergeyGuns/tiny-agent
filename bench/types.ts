@@ -2,13 +2,16 @@
 // tiny-agent Benchmark — типы и интерфейсы
 // ═══════════════════════════════════════════════════════════════
 
+import type { ToolCallRecord } from '../types.js';
+
 export type Difficulty = 'easy' | 'medium' | 'hard' | 'expert';
 
 export type Category =
   | 'terminal'   // Файловые операции (Terminal-Bench style)
   | 'tool_use'   // Использование инструментов (Tau-Bench style)
   | 'research'   // Многошаговое исследование (GAIA style)
-  | 'planning';  // Планирование и декомпозиция
+  | 'planning'   // Планирование и декомпозиция
+  | 'rlm';       // Recursive Language Model integration
 
 export interface Task {
   id: string;                    // уникальный ID, например "T-001"
@@ -28,14 +31,6 @@ export interface EvalContext {
   writtenFiles: Map<string, string>;
   /** История вызовов инструментов */
   toolCalls: ToolCallRecord[];
-}
-
-export interface ToolCallRecord {
-  step: number;
-  tool: string;
-  args: Record<string, unknown>;
-  result: string;
-  durationMs: number;
 }
 
 export interface EvalResult {

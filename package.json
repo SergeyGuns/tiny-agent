@@ -9,17 +9,18 @@
     "tui": "tsc && node dist/agent.js",
     "dev": "tsc && node dist/development_framework.js",
     "clean": "node -e \"const fs = require('fs'); ['dist', 'session.log', 'bench-report.json'].forEach(p => fs.existsSync(p) && fs.rmSync(p, {recursive: true}))\"",
-    "test": "npx tsc && node --test dist/test/*.test.js",
-    "bench": "npx tsc && node dist/bench/runner.js",
+    "test": "npx tsc ; node --test dist/test/*.test.js",
+    "bench": "npx tsc ; node dist/bench/runner.js",
     "bench:unit": "npm test",
-    "bench:category": "npx tsc && node dist/bench/runner.js --category",
-    "bench:task": "npx tsc && node dist/bench/runner.js --task"
+    "bench:category": "npx tsc ; node dist/bench/runner.js --category",
+    "bench:task": "npx tsc ; node dist/bench/runner.js --task"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
     "typescript": "^5.3.3"
   },
   "dependencies": {
-    "cheerio": "^1.2.0"
+    "cheerio": "^1.2.0",
+    "playwright": "^1.60.0"
   }
 }

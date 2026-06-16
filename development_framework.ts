@@ -1,3 +1,5 @@
+import type { Message, ToolCallRecord, ReActState } from './types.js';
+
 import * as fs from 'fs';
 import * as cp from 'child_process';
 import * as path from 'path';
@@ -8,8 +10,6 @@ const C = {
   blue: "\x1b[34m", yellow: "\x1b[33m", cyan: "\x1b[36m",
   magenta: "\x1b[35m", green: "\x1b[32m", red: "\x1b[31m"
 };
-
-interface Message { role: 'system' | 'user' | 'assistant'; content: string; }
 
 // --- МОДУЛЬ ЛОГИРОВАНИЯ ---
 class AgentLogger {

@@ -1,0 +1,650 @@
+import type { ToolFunction } from './types.js';
+import type { Message, ToolCallRecord, ReActState, Strategy } from './types.js';
+
+import * as fs from 'fs';
+import * as path from 'path';
+
+// Загрузка .env файла
+function loadEnv() {
+  try {
+    const envPath = path.resolve(process.cwd(), '.env');
+    const content = fs.readFileSync(envPath, 'utf-8');
+    for (const line of content.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx === -1) continue;
+      const key = trimmed.slice(0, eqIdx).trim();
+      const value = trimmed.slice(eqIdx + 1).trim();
+      if (key && !process.env[key]) process.env[key] = value;
+    }
+  } catch {}
+}
+loadEnv();
+// --- УТИЛИТА: извлечение текста из HTML ---
+export function extractTextFromHtml(html: string): string {
+  let text = html.replace(/<script[\s\S]*?<\/script>/gi, ' ');
+  text = text.replace(/<style[\s\S]*?<\/style>/gi, ' ');
+  text = text.replace(/<[^>]+>/g, ' ');
+  text = text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n)));
+  text = text.replace(/\s+/g, ' ').trim();
+  return text;
+}
+
+// --- DUCKDUCKGO SEARCH (на основе web-search-mcp) ---
+// Использует DuckDuckGo HTML-интерфейс — бесплатно, без ключа, без браузера.
+// Паттерн: HTTP GET → парсинг HTML-результатов → структурированный вывод.
+
+interface DdgResult {
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+// Парсинг HTML от html.duckduckgo.com
+// Формат: <table><tr><td><a class="result__a">title</a>...<td class="result__snippet">snippet</td>...<td><a>url</a></td></tr></table>
+// Универсальный подход: ищем все result__a ссылки и собираем контекст вокруг них.
+
+export function parseDdgHtml(html: string, maxResults: number): DdgResult[] {
+  const results: DdgResult[] = [];
+  const seen = new Set<string>();
+
+  // result__a — заголовки результатов (содержат href и текст)
+  const linkRe = /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+  let linkMatch: RegExpExecArray | null;
+
+  while ((linkMatch = linkRe.exec(html)) !== null) {
+    if (results.length >= maxResults) break;
+
+    let url = linkMatch[1].trim();
+    const title = extractTextFromHtml(linkMatch[2]);
+
+    // DuckDuckGo может использовать редирект-ссылки
+    if (url.includes('duckduckgo.com') && url.includes('uddg=')) {
+      const m = url.match(/uddg=([^&]+)/);
+      if (m) url = decodeURIComponent(m[1]);
+    }
+    if (url.includes('duckduckgo.com') || seen.has(url) || url.startsWith('javascript:')) continue;
+    seen.add(url);
+
+    // Ищем сниппет после этой ссылки — result__snippet в том же блоке
+    const after = html.slice(linkMatch.index + linkMatch[0].length, linkMatch.index + linkMatch[0].length + 2000);
+    const snippetRe = /<(?:td|div|a|p)[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/(?:td|div|a|p)>/i;
+    const snipMatch = after.match(snippetRe);
+    const snippet = snipMatch ? extractTextFromHtml(snipMatch[1]) : '';
+
+    // Ищем result__url
+    const urlRe = /<(?:span|a)[^>]*class="[^"]*result__url[^"]*"[^>]*>([\s\S]*?)<\/(?:span|a)>/i;
+    const urlMatch = after.match(urlRe);
+    const displayUrl = urlMatch ? extractTextFromHtml(urlMatch[1]) : url;
+
+    results.push({ title: title || displayUrl, url, snippet });
+  }
+
+  // Fallback: если result__a не нашли — ищем любые внешние ссылки с длинным текстом
+  if (results.length === 0) {
+    const fallbackRe = /<a[^>]*href="(https?:\/\/[^"]{10,})"[^>]*>([^<]{10,200})<\/a>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = fallbackRe.exec(html)) !== null) {
+      if (results.length >= maxResults) break;
+      const url = m[1];
+      const title = m[2].trim();
+      if (url.includes('duckduckgo.com') || seen.has(url)) continue;
+      seen.add(url);
+      results.push({ title, url, snippet: '' });
+    }
+  }
+
+  return results;
+}
+
+async function translateRuToEn(text: string): Promise<string> {
+  try {
+    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=ru|en`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    if (res.ok) {
+      const data = (await res.json()) as any;
+      if (data?.responseData?.translatedText) return data.responseData.translatedText;
+    }
+  } catch {}
+  return text;
+}
+
+async function searchDuckDuckGo(query: string, numResults: number): Promise<DdgResult[]> {
+  // If query contains Cyrillic, translate it to English first via MyMemory (free, no key)
+  const hasCyrillic = /[а-яА-ЯёЁ]/.test(query);
+  const translatedQuery = hasCyrillic ? await translateRuToEn(query) : query;
+
+  const enQuery = translatedQuery
+    .replace(/основные различия/gi, 'differences between')
+    .replace(/преимущества/gi, 'advantages').replace(/недостатки/gi, 'disadvantages')
+    .replace(/сравнительный анализ/gi, 'comparison').replace(/столица/gi, 'capital')
+    .replace(/население/gi, 'population').replace(/страны/gi, 'countries')
+    .replace(/практики/gi, 'best practices').replace(/работы с/gi, 'working with')
+    .replace(/последний релиз/gi, 'latest release').replace(/версия/gi, 'version')
+    .replace(/дата/gi, 'date').replace(/текущая/gi, 'current')
+    .replace(/информация/gi, 'information').replace(/найди/gi, 'find')
+    .replace(/список/gi, 'list').replace(/топ/gi, 'top');
+
+  try {
+    const url = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(enQuery)}&format=json&srlimit=${numResults}&origin=*`;
+    const res = await fetch(url, { headers: { 'User-Agent': 'TinyAgent/10 (github.com/SergeyGuns/tiny-agent)' }, signal: AbortSignal.timeout(15000) });
+    if (res.ok) {
+      const data = await res.json() as any;
+      return (data?.query?.search || []).slice(0, numResults).map((x: any) => ({
+        title: (x.title as string).replace(/<[^>]+>/g, ''),
+        url: `https://en.wikipedia.org/wiki/${encodeURIComponent((x.title as string).replace(/ /g, '_'))}`,
+        snippet: (x.snippet as string).replace(/<[^>]+>/g, '').substring(0, 250),
+      }));
+    }
+  } catch {}
+  return [];
+}
+
+// --- ИНСТРУМЕНТЫ ---
+export const tools: Record<string, ToolFunction> = {
+  webSearch: async (args: Record<string, unknown>) => {
+    try {
+      const query = args.query as string;
+      const limit = Math.min(Math.max(Number(args.limit) || 5, 1), 10);
+
+      const results = await searchDuckDuckGo(query, limit);
+
+      if (results.length === 0) {
+        return 'Ничего не найдено.';
+      }
+
+      return results.map((r, i) => {
+        let line = `[${i + 1}] ${r.title}\n    URL: ${r.url}`;
+        if (r.snippet) line += `\n    ${r.snippet}`;
+        return line;
+      }).join('\n\n');
+    } catch (e: any) { return `Ошибка поиска: ${e.message}`; }
+  },
+  fetch: async (args: Record<string, unknown>) => {
+    try {
+      const url = args.url as string;
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        return 'Ошибка: URL должен начинаться с http:// или https://';
+      }
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; TinyAgent/1.0)',
+          'Accept': 'text/html,application/json,*/*'
+        },
+        signal: AbortSignal.timeout(15000)
+      });
+      const contentType = res.headers.get('content-type') || '';
+      const body = await res.text();
+      if (contentType.includes('application/json')) {
+        return body.substring(0, 5000);
+      }
+      return extractTextFromHtml(body).substring(0, 5000);
+    } catch (e: any) { return `Ошибка fetch: ${e.message}`; }
+  },
+  readDir: (args: Record<string, unknown>) => {
+    try { return fs.readdirSync(path.resolve((args.path as string) || '.')).join(', '); }
+    catch (e: any) { return `Ошибка: ${e.message}`; }
+  },
+  readFile: (args: Record<string, unknown>) => {
+    try { return fs.readFileSync(path.resolve(args.path as string), 'utf-8'); }
+    catch (e: any) { return `Ошибка: ${e.message}`; }
+  },
+  createPlan: (args: Record<string, unknown>) => {
+    try {
+      const steps = args.steps as string[];
+      if (!steps || !Array.isArray(steps)) return 'Ошибка: массив шагов не указан';
+      const plan = steps.map((s, i) => `${i + 1}. ${s}`).join('\n');
+      const content = `# План выполнения\n\n${plan}\n`;
+      const p = path.resolve('PLAN.md');
+      fs.writeFileSync(p, content, 'utf-8');
+      return `План из ${steps.length} шагов сохранён в PLAN.md`;
+    } catch (e: any) { return `Ошибка: ${e.message}`; }
+  },
+  mkdir: (args: Record<string, unknown>) => {
+    try {
+      const p = path.resolve((args.path as string) || '.');
+      fs.mkdirSync(p, { recursive: true });
+      return `Директория создана: ${p}`;
+    } catch (e: any) { return `Ошибка: ${e.message}`; }
+  },
+  writeFile: (args: Record<string, unknown>) => {
+    try {
+      const p = path.resolve(args.path as string);
+      const dir = path.dirname(p);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(p, args.content as string, 'utf-8');
+      return `Файл успешно записан: ${p}`;
+    }
+    catch (e: any) { return `Ошибка записи файла: ${e.message}`; }
+  },
+  runPackageScript: async (args: Record<string, unknown>) => { return 'Не поддерживается в тестах'; },
+  grep: async (args: Record<string, unknown>) => {
+    try {
+      const pattern = args.pattern as string;
+      const filesGlob = (args.files as string) || '.';
+      if (!pattern) return 'Ошибка: pattern не указан';
+      const { execSync } = await import('node:child_process');
+      // Используем grep для поиска по файлам
+      const grepCmd = filesGlob === '.'
+        ? `grep -r -n -H "${pattern}" . --include="*" --exclude-dir=".git" --exclude-dir="node_modules" 2>/dev/null | head -50`
+        : `grep -n -H "${pattern}" ${filesGlob} 2>/dev/null | head -50`;
+      const output = execSync(grepCmd, {
+        cwd: process.cwd(),
+        timeout: 10000,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return output || 'Совпадений не найдено';
+    } catch (e: any) {
+      if (e.message?.includes('ENOENT')) return 'grep не установлен в системе';
+      return `Ошибка grep: ${e.message?.substring(0, 200)}`;
+    }
+  },
+  runCommand: async (args: Record<string, unknown>) => {
+    try {
+      const cmd = (args.command || args.cmd) as string;
+      if (!cmd || typeof cmd !== 'string') return 'Ошибка: команда не указана';
+      // Запрещаем опасные команды
+      const blocked = ['rm -rf /', 'sudo', 'chmod 777', 'mkfs', 'dd ', 'shutdown', 'reboot', '> /dev'];
+      if (blocked.some(b => cmd.includes(b))) return `Ошибка: команда "${cmd}" заблокирована по безопасности`;
+      const { execSync } = await import('node:child_process');
+      const output = execSync(cmd, {
+        cwd: (args.cwd as string) || process.cwd(),
+        timeout: 30000,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return output.substring(0, 2000) || 'Выполнено (пустой вывод)';
+    } catch (e: any) {
+      if (e.message?.includes('ENOENT')) return `Ошибка: файл или команда не найдена — ${e.message}`;
+      if (e.message?.includes('timeout')) return 'Ошибка: таймаут 30с';
+      return `Ошибка: ${e.message?.substring(0, 200)}`;
+    }
+  },
+};
+
+// --- ПАРСИНГ ACTION ---
+export function parseAction(text: string): { name: string; args: Record<string, unknown> } | null {
+  // Поддержка форматов:
+  // 1. Action: toolName[{"key": "value"}]
+  // 2. **Action:** ... (жирный текст)
+  const actionPatterns = [
+    /Action:\s*(\w+)\[([\s\S]*?)\]/,       // Обычный формат
+    /\*\*Action:\*\*\s*(\w+)\[([\s\S]*?)\]/, // Жирный формат
+    /^\s*(\w+)\[\s*([^\\]]*)\s*\]\s*$/,      // Только имя и args (в конце строки)
+  ];
+
+  for (const pattern of actionPatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      try {
+        return { name: match[1].trim(), args: JSON.parse(match[2].trim()) };
+      } catch {
+        // JSON parse failed — try lenient recovery for writeFile with unescaped content
+        const toolName = match[1].trim();
+        const rawArgs = match[2].trim();
+        if (toolName === 'writeFile') {
+          const recovered = parseWriteFileArgs(rawArgs);
+          if (recovered) return { name: 'writeFile', args: recovered };
+        }
+        return null;
+      }
+    }
+  }
+  // Fallback: если не нашли Action, проверяем есть ли JSON в тексте
+  const jsonMatch = text.match(/({[\s\S]*})/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[1]);
+      if (parsed.path && typeof parsed.content === 'string') return { name: 'writeFile', args: parsed };
+      if (parsed.pattern && typeof parsed.files === 'string') return { name: 'grep', args: parsed };
+    } catch {}
+  }
+  return null;
+}
+
+// Lenient parser for writeFile args when JSON.parse fails due to unescaped content.
+// Handles: {"path": "file.json", "content": "{"key": "value"}"}  (unescaped inner quotes)
+// Strategy: extract "path" via simple regex, then grab everything after "content": as the content value.
+function parseWriteFileArgs(raw: string): Record<string, unknown> | null {
+  // Extract path: "path": "..." (simple quoted string, no nested quotes expected)
+  const pathMatch = raw.match(/"path"\s*:\s*"([^"]+)"/);
+  if (!pathMatch) return null;
+  const path = pathMatch[1];
+
+  // Extract content: everything between "content": " and the last "}
+  // Find the content key position
+  const contentKeyIdx = raw.indexOf('"content"');
+  if (contentKeyIdx === -1) return null;
+
+  // Find the opening quote after "content":
+  const afterKey = raw.slice(contentKeyIdx + '"content"'.length);
+  const colonIdx = afterKey.indexOf(':');
+  if (colonIdx === -1) return null;
+  const afterColon = afterKey.slice(colonIdx + 1).trim();
+  if (!afterColon.startsWith('"')) return null;
+
+  // Content starts after the opening quote. Find the closing quote+brace.
+  // Strategy: content ends at the last "} in the string (the writeFile args closing brace)
+  // We strip the trailing "}  which is the end of the JSON object
+  const contentStart = 1; // skip opening quote
+  // Find last occurrence of "}  — that's the end of writeFile args
+  const lastBrace = raw.lastIndexOf('}');
+  if (lastBrace === -1) return null;
+
+  // The content value ends before the closing quote that precedes the last }
+  // Walk backwards from lastBrace to find the closing quote
+  let contentEnd = lastBrace;
+  // Skip whitespace before }
+  while (contentEnd > 0 && raw[contentEnd - 1] === ' ') contentEnd--;
+  // The character at contentEnd should be the closing quote of content value
+  if (raw[contentEnd - 1] !== '"') return null;
+  contentEnd--; // now points to closing quote
+
+  // Calculate offset: contentKeyIdx + '"content"'.length + colonIdx + 1 + contentStart
+  const contentValueStart = contentKeyIdx + '"content"'.length + colonIdx + 1 + 1 + 1; // +1 for colon, +1 for opening quote, +1 for trim
+  // Simpler: just slice from the opening quote position
+  const openingQuotePos = contentKeyIdx + '"content"'.length + colonIdx + 1;
+  // Find the actual opening quote
+  let qPos = openingQuotePos;
+  while (qPos < raw.length && raw[qPos] !== '"') qPos++;
+  if (qPos >= raw.length) return null;
+
+  const content = raw.slice(qPos + 1, contentEnd);
+  return { path, content };
+}
+
+// ─── REACT LOOP (для бенчмарка и TUI) ───────────────────────
+
+export const BENCH_SYSTEM_PROMPT = `Вы — автономный AI-агент. Формат ответа:
+
+Plan: краткий план действий
+Thought: размышления о текущем шаге  
+Action: toolName[{"arg": "value"}]
+
+Инструменты: webSearch, fetch, readDir, readFile, writeFile, mkdir, createPlan(steps[]), grep(pattern)
+
+ВАЖНЕЙШЕЕ ПРАВИЛО:
+- Каждый файл ДОЛЖЕН быть создан через вызов writeFile — мысль или план НЕ создает файл!
+- Формат: Action: writeFile[{"path": "filename.txt", "content": "текст"}]
+
+ПРАВИЛА:
+1. Аргументы внутри [] — валидный JSON
+2. Результат задачи — файлы на диске. Используйте writeFile для КАЖДОГО создаваемого файла
+3. НЕ завершайте задачу пока не создали ВСЕ требуемые файлы и не проверили их существование через readDir
+4. Для задач с несколькими файлами: создавайте по одному, проверяйте чеклистом "[✓ file1 | ✗ file2]"
+
+ЧЕКЛИСТ ДЛЯ MARKDOWN-ОТЧЁТОВ:
+- Перед завершением проверьте что ВСЕ требуемые секции (## заголовки) присутствуют
+- Сверьтесь с условием задачи: какие секции указаны — все должны быть в файле
+- Не пропускайте секции "Вывод", "Рекомендации", "Сравнение" и т.д.
+
+ПРИМЕРЫ:
+Action: writeFile[{"path": "config/settings.json", "content": "{\"debug\": true}"}]
+Action: createPlan(steps:[{title:"Шаг 1", desc:"Описание"}])
+
+ПАТТЕРН МНОЖЕСТВЕННОГО ЧТЕНИЯ → ОДНА ЗАПИСЬ:
+Если задача требует прочитать несколько файлов и объединить результат:
+1. Прочитайте все нужные файлы через readFile (данные сохраняются в истории)
+2. Объединийте данные в памяти (массивы через concat, объекты через spread)
+3. Запишите ОДИН результирующий файл через writeFile с полным содержимым
+
+Пример для задачи "прочитай все users_*.json, объедини, отсортируй по name":
+  Action: readDir[{"path": "."}]
+  Action: readFile[{"path": "users_a.json"}]
+  Action: readFile[{"path": "users_b.json"}]
+  Action: readFile[{"path": "users_c.json"}]
+  # Теперь все данные в памяти. Объедините массивы, отсортируйте, запишите:
+  Action: writeFile[{"path": "all_users.json", "content": "<объединённый отсортированный JSON>"}]
+НЕ читайте файлы снова после записи!
+
+ПАТТЕРН ЧТЕНИЕ → ВАЛИДАЦИЯ → ЗАПИСЬ FIXED + REPORT:
+Если задача требует прочитать файл, исправить данные и записать результат + отчёт:
+1. Прочитайте файл через readFile (данные сохраняются в истории)
+2. Проверьте/исправьте данные в памяти (валидация, фильтрация, исправление ошибок)
+3. Запишите исправленные данные одним файлом через writeFile
+4. Запишите отчёт (report.txt) вторым вызовом writeFile
+5. Проверьте что ОБА файла созданы через readDir
+
+Пример для задачи "прочитай users.json, исправь невалидные email, запиши users_fixed.json и report.txt":
+  Action: readFile[{"path": "users.json"}]
+  # Данные получены. Теперь исправьте email в памяти и запишите ОБА файла:
+  # При записи JSON в content: используйте ОДИН уровень экранирования: \\"key\\": \\"value\\"
+  # Если JSON не получается — запишите данные как простой текст, это лучше чем ничего
+  Action: writeFile[{"path": "users_fixed.json", "content": "<исправленный JSON массив>"}]
+  Action: writeFile[{"path": "report.txt", "content": "Исправлено записей: N"}]
+  Action: readDir[{"path": "."}]
+  # Убедитесь что ОБА файла есть в списке → задача завершена
+
+ЗАВЕРШЕНИЕ:
+Когда все файлы созданы — укажите это в ответе. Не вызывайте лишних инструментов.
+
+ВСЕ ФАЙЛЫ СОХРАНЕНЫ ✓ Задача завершена.`;
+
+export interface ReActCallbacks {
+  onStep?: (step: number, response: string) => void;
+  onToolCall?: (step: number, tool: string, args: Record<string, unknown>, result: string) => void;
+  onComplete?: (steps: number) => void;
+}
+
+export async function runReActLoop(
+  prompt: string,
+  maxSteps: number = 15,
+  callbacks?: ReActCallbacks,
+): Promise<{ steps: number; toolCalls: ToolCallRecord[] }> {
+  const history: Message[] = [
+    { role: 'system', content: BENCH_SYSTEM_PROMPT },
+    { role: 'user', content: prompt },
+  ];
+  const toolCalls: ToolCallRecord[] = [];
+  const recentCalls: string[] = [];
+  const filesCreated: string[] = [];
+  let lastSummaryAt = 0;
+  let lastReadStep = 0; // шаг последнего readDir/readFile
+  let emptySteps = 0; // счётчик шагов без Action
+
+  for (let step = 1; step <= maxSteps; step++) {
+    const response = await queryLLM(history);
+    history.push({ role: 'assistant', content: response });
+    callbacks?.onStep?.(step, response);
+
+    const action = parseAction(response);
+    if (!action) {
+      emptySteps++;
+      // Если модель 3+ шага не вызывает инструмент — подталкиваем
+      if (emptySteps >= 3) {
+        history.push({ role: 'user',
+          content: `ВНИМАНИЕ: вы уже ${emptySteps} шага не вызываете инструмент! Немедленно выполните действие через Action: имя[{"ключ": "значение"}]. Если вы завершили задачу — запишите результат в файл через writeFile.` });
+        emptySteps = 0;
+        continue;
+      }
+      if (step <= 3) {
+        history.push({ role: 'user',
+          content: `ВЫ НЕ ВЫЗВАЛИ ИНСТРУМЕНТ! Это шаг ${step}. Вызовите инструмент прямо сейчас в формате: Action: имя[{"ключ": "значение"}]. Например: Action: writeFile[{"path": "output.txt", "content": "hello"}]` });
+        continue;
+      }
+      callbacks?.onComplete?.(step);
+      return { steps: step, toolCalls };
+    }
+    emptySteps = 0; // сбрасываем счётчик при успешном Action
+
+    if (action.args.error) {
+      history.push({ role: 'user', content: 'Observation: Ошибка аргументов.' });
+      continue;
+    }
+
+    const toolFn = tools[action.name];
+    if (!toolFn) {
+      history.push({ role: 'user', content: `Observation: Инструмент "${action.name}" не найден.` });
+      continue;
+    }
+
+    const start = Date.now();
+    let result: string;
+    try {
+      result = await toolFn(action.args);
+      if (typeof result !== 'string') result = String(result);
+    } catch (e: any) {
+      result = `Ошибка выполнения: ${e.message?.substring(0, 200)}`;
+    }
+    const durationMs = Date.now() - start;
+
+    const truncatedResult = result.length > 2000
+      ? result.substring(0, 2000) + `\n... [обрезано, всего ${result.length} символов]`
+      : result;
+
+    toolCalls.push({ step, tool: action.name, args: action.args, result, durationMs });
+    callbacks?.onToolCall?.(step, action.name, action.args, truncatedResult);
+
+    // Трекинг созданных файлов и чтения
+    if (action.name === 'writeFile' && !result.startsWith('Ошибка')) {
+      const filePath = (action.args as any).path;
+      if (filePath) filesCreated.push(filePath);
+    }
+    if (action.name === 'readDir' || action.name === 'readFile') {
+      lastReadStep = step;
+    }
+
+    history.push({ role: 'user', content: `Observation: ${truncatedResult}` });
+    // v9: Подсказка если команда runCommand не сработала несколько раз
+    const lastTool = toolCalls[toolCalls.length - 1];
+    if (lastTool && lastTool.tool === 'runCommand' && lastTool.result.includes('Command failed')) {
+      const commandFailures = toolCalls.filter(c => c.tool === 'runCommand' && c.result.includes('Command failed'));
+      if (commandFailures.length >= 2) {
+        const cmd = lastTool.args.command as string;
+        history.push({ role: 'user',
+          content: `ВНИМАНИЕ: команда "${cmd?.substring(0, 50)}" не сработала. Используйте только встроенные инструменты (writeFile, fetch, etc.), а не runCommand.` });
+      }
+    }
+
+    // v9b: Если модель прочитала данные на предыдущем шаге но не записала — подталкиваем сразу
+    if (lastReadStep > 0 && step - lastReadStep >= 1 && filesCreated.length === 0) {
+      const lastReadCall = toolCalls.filter(c => c.tool === 'readDir' || c.tool === 'readFile').pop();
+      const readTarget = lastReadCall?.args?.path || 'файл';
+      history.push({ role: 'user',
+        content: `ВЫ ПРОЧИТАЛИ "${readTarget}" НА ПРОШЛОМ ШАГЕ! ДАННЕ ПОЛУЧЕНЫ. НЕМЕДЛЕННО ЗАПИШИТЕ РЕЗУЛЬТАТ через writeFile! НЕ ЧИТАЙТЕ БОЛЬШЕ — ПИШИТЕ!` });
+      lastReadStep = 0;
+    }
+
+    // Если модель сделала 3+ шага но не записала ни одного файла — подталкиваем
+    if (step >= 3 && filesCreated.length === 0 && (action.name === 'readDir' || action.name === 'readFile')) {
+      history.push({ role: 'user',
+        content: `ВНИМАНИЕ: шаг ${step}, создано файлов: 0. Вы только читаете но не записываете результат. Немедленно используйте writeFile для сохранения результата задачи.` });
+    }
+
+    // v8: Если агент создал план но не создал файлы — подталкиваем к выполнению
+    if (action.name === 'createPlan' && step < maxSteps - 2) {
+      history.push({ role: 'user',
+        content: 'План создан. ТЕПЕРЬ немедленно начинайте создавать файлы из плана. Используйте writeFile для каждого файла.' });
+    }
+
+    // v8: Если агент создал только 1 файл а задача требует больше — подталкиваем
+    if (action.name === 'writeFile' && filesCreated.length === 1) {
+      const userPrompt = history.length > 1 ? history[1].content || '' : '';
+      const multiFileKeywords = ['структуру', 'файлы:', 'следующую', 'структура файлов', 'создай:', ' - ', 'report', 'отчёт', 'исправ', 'fixed', 'report.txt'];
+      const needsMoreFiles = multiFileKeywords.some(k => userPrompt.includes(k));
+      if (needsMoreFiles && step < maxSteps - 1) {
+        history.push({ role: 'user',
+          content: `ВНИМАНИЕ: создан только 1 файл (${filesCreated[0]}), но задача требует нескольких файлов! Проверьте условие задачи и создайте ОСТАЛЬНЫЕ файлы через writeFile. Не останавливайтесь!` });
+      }
+    }
+
+    // v8: Если последние 3 шага — повторный writeFile без прогресса — форсируем завершение
+    if (step >= 5 && filesCreated.length > 0) {
+      const lastThree = toolCalls.slice(-3);
+      const allWriteSame = lastThree.length >= 3 &&
+        lastThree.every(c => c.tool === 'writeFile') &&
+        lastThree.every(c => JSON.stringify(c.args) === JSON.stringify(lastThree[0].args));
+      if (allWriteSame) {
+        history.push({ role: 'user',
+          content: 'Вы повторяете запись того же файла. Задача либо завершена либо нужно создать ДРУГИЕ файлы. Проверьте требования задачи.' });
+      }
+    }
+
+    // Каждые 7 шагов — краткий итог прогресса
+    if (step - lastSummaryAt >= 7 && step < maxSteps) {
+      const filesList = filesCreated.length > 0
+        ? filesCreated.slice(-3).join(', ')
+        : 'нет';
+      history.push({ role: 'user',
+        content: `[Шаг ${step}/${maxSteps}] Файлы: ${filesList}. Завершите задачу.` });
+      lastSummaryAt = step;
+    }
+
+    // Детекция зацикливания: один и тот же вызов 3 раза подряд
+    const callSig = `${action.name}:${JSON.stringify(action.args)}`;
+    recentCalls.push(callSig);
+    if (recentCalls.length > 6) recentCalls.shift();
+    if (recentCalls.length >= 6 &&
+        recentCalls[0] === recentCalls[2] && recentCalls[2] === recentCalls[4] &&
+        recentCalls[1] === recentCalls[3] && recentCalls[3] === recentCalls[5]) {
+      // Зацикливание обнаружено — добавляем подсказку
+      history.push({ role: 'user',
+        content: 'ВНИМАНИЕ: обнаружено зацикливание. Вы вызываете одни и те же инструменты. Попробуйте другой подход или завершите задачу.' });
+    }
+
+    // v7: Детекция повторного чтения — если агент прочитал 4+ файла но не записал результат
+    const readCount = toolCalls.filter(c => c.tool === 'readFile' || c.tool === 'readDir').length;
+    if (readCount >= 4 && filesCreated.length === 0) {
+      history.push({ role: 'user',
+        content: `ВНИМАНИЕ: вы прочитали ${readCount} файлов/директорий но не создали ни одного выходного файла. Объедините все прочитанные данные и запишите результат через writeFile. Не читайте больше!` });
+    }
+  }
+
+  callbacks?.onComplete?.(maxSteps);
+  return { steps: maxSteps, toolCalls };
+}
+
+export async function queryLLM(messages: Message[], retries = 5): Promise<string> {
+  const baseUrl = process.env.LM_STUDIO_URL || 'http://localhost:1234/v1';
+  const modelName = process.env.LM_STUDIO_MODEL || 'local-model';
+
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: modelName, messages, temperature: 0.7 }),
+        signal: AbortSignal.timeout(300000),
+      });
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        // Model not loaded yet — retry with backoff
+        if (text.includes('Model is unloaded') || text.includes('Failed to load model') || text.includes('No models loaded')) {
+          if (attempt < retries) {
+            await sleep(10000 * attempt);
+            continue;
+          }
+        }
+        throw new Error(`HTTP ${response.status}: ${text.substring(0, 200)}`);
+      }
+
+      const data = await response.json() as any;
+
+      if (!data.choices?.[0]?.message?.content) {
+        if (attempt < retries) {
+          await sleep(5000 * attempt);
+          continue;
+        }
+        throw new Error('Модель вернула пустой ответ');
+      }
+
+      return data.choices[0].message.content;
+    } catch (e: any) {
+      if (attempt < retries) {
+        await sleep(5000 * attempt);
+        continue;
+      }
+      throw e;
+    }
+  }
+
+  throw new Error('queryLLM: все попытки исчерпаны');
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+export type { ToolCallRecord };
