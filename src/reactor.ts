@@ -28,7 +28,6 @@ export async function runReActLoop(
     { role: 'user', content: prompt },
   ];
   const toolCalls: ToolCallRecord[] = [];
-  const recentCalls: string[] = [];
   const filesCreated: string[] = [];
   let lastSummaryAt = 0;
   let lastReadStep = 0;
@@ -43,13 +42,20 @@ export async function runReActLoop(
 
     const action = parseAction(response);
 
+    // v12: Detect STOP/done signals from thinking models
+    const isStopSignal = /\b(STOP|DONE|COMPLETE|FINISHED|ЗАВЕРШЕНО|ГОТОВО)\b/i.test(response) ||
+                         /task\s+(is\s+)?(done|complete|finished)/i.test(response) ||
+                         /^Action:\s*(STOP|DONE|COMPLETE|FINISHED)/i.test(response.trim());
+    if (isStopSignal && filesCreated.length > 0) {
+      callbacks?.onComplete?.(step);
+      return { steps: step, toolCalls };
+    }
+
     // v10: Detect completion phrases
     if (filesCreated.length > 0) {
-      const completionPhrases = [
-        'Готово!', 'Задача выполнена!', 'Задача завершена!',
-        'Работа завершена!', 'Отчёт создан!'
-      ];
-      if (completionPhrases.some(p => response.includes(p))) {
+      const isCompleting = await classifyPrompt(response,
+        'Is the agent signaling that the task is done or complete (e.g. saying "ready", "done", "completed", "finished")?');
+      if (isCompleting) {
         consecutiveCompletes++;
         if (consecutiveCompletes >= 2) {
           callbacks?.onComplete?.(step);
@@ -115,11 +121,29 @@ export async function runReActLoop(
       history.push({ role: 'user', content: `Observation: инструмент "${action.name}" не найден.` });
       continue;
     }
+    // [A3b] Normalize field names → expected tool args
+    if (action.name === 'writeFile') {
+      if (!action.args.path && action.args.file) {
+        action.args = { ...action.args, path: action.args.file };
+        delete action.args.file;
+      }
+      if (!action.args.path && action.args.filename) {
+        action.args = { ...action.args, path: action.args.filename };
+        delete action.args.filename;
+      }
+    }
+
 
     const start = Date.now();
     let result: string;
     try {
       result = await toolFn(action.args);
+      // [A3a] Strip markdown code fences from rlm output
+      if (action.name === 'rlm' && typeof result === 'string') {
+        result = result.replace(/^```(?:python|javascript|js|ts|json|html|css|sh|bash|txt|md)?\s*/m, '')
+                         .replace(/\s*```$/m, '')
+                         .trim();
+      }
       if (typeof result !== 'string') result = String(result);
     } catch (e: any) {
       result = `Ошибка: ${e.message?.substring(0, 200)}`;
@@ -132,16 +156,32 @@ export async function runReActLoop(
 
     toolCalls.push({ step, tool: action.name, args: action.args, result, durationMs });
     callbacks?.onToolCall?.(step, action.name, action.args, truncatedResult);
+    // [A1] Force-stop on N consecutive identical-tool errors
+    const CONSECUTIVE_ERROR_THRESHOLD = 3;
+    if (result.startsWith('Ошибка') || result.includes(' error')) {
+      const recentErrors = toolCalls.slice(-CONSECUTIVE_ERROR_THRESHOLD);
+      if (recentErrors.length >= CONSECUTIVE_ERROR_THRESHOLD &&
+          recentErrors.every(c => c.tool === action.name &&
+            (c.result.startsWith('Ошибка') || c.result.includes(' error')))) {
+        callbacks?.onComplete?.(step);
+        return { steps: step, toolCalls };
+      }
+    }
 
     // Track created files
     if (action.name === 'writeFile' && !result.startsWith('Ошибка')) {
       const filePath = (action.args as any).path;
       if (filePath) filesCreated.push(filePath);
+      // [A4] Guard against creating excess files
+      if (filesCreated.length > 6) {
+        callbacks?.onComplete?.(step);
+        return { steps: step, toolCalls };
+      }
+
       // v11b: Post-writeFile check for list/best-practices tasks
       if (filePath && filePath.endsWith('.md')) {
-        const isListTask = userPrompt.includes('список') || userPrompt.includes('Список') ||
-          userPrompt.includes('best practices') || userPrompt.includes('Best Practices') ||
-          userPrompt.includes('лучшие практики');
+        const isListTask = await classifyPrompt(userPrompt,
+          'Does the user ask for a list, best practices, or enumerated items (like "best practices", "список", "лучшие практики")?');
         if (isListTask) {
           try {
             const written = fs.readFileSync(filePath, 'utf-8');
@@ -172,23 +212,13 @@ export async function runReActLoop(
         content: `Вы прочитали ${readFileCount} файлов (${readPaths.join(', ')}).  НЕМЕДЛЕННО объедините данные и запишите через writeFile! Пример: Action: writeFile[{"path": "all_users.json", "content": "[... объединённые данные ...]"}]` });
     }
     // v10c: JSON transform nudge
-    const isJsonTransform = (p: string) => p.includes('преобразуй') || p.includes('transform') || p.includes('трансформируй');
-    if (isJsonTransform(userPrompt) && readFileCount >= 1 && filesCreated.length === 0) {
+    if ((await classifyPrompt(userPrompt, 'Does the user ask to transform, convert, or reformat JSON data?')) && readFileCount >= 1 && filesCreated.length === 0) {
       history.push({ role: 'user', content: `Вы прочитали JSON.  НЕМЕДЛЕННО преобразуйте данные и запишите через writeFile!` });
     }
 
     history.push({ role: 'user', content: `Observation: ${truncatedResult}` });
 
     // v9: runCommand failure → suggest alternatives
-    const lastTool = toolCalls[toolCalls.length - 1];
-    if (lastTool && lastTool.tool === 'runCommand' && lastTool.result.includes('Command failed')) {
-      const commandFailures = toolCalls.filter(c => c.tool === 'runCommand' && c.result.includes('Command failed'));
-      if (commandFailures.length >= 2) {
-        const cmd = lastTool.args.command as string;
-        history.push({ role: 'user',
-          content: `ВНИМАНИЕ: команда "${cmd?.substring(0, 50)}" не сработала.  Используйте встроенные инструменты (writeFile, fetch, etc.), а не runCommand.` });
-      }
-    }
 
     // v9b: read without subsequent write
     if (lastReadStep > 0 && step - lastReadStep >= 1 && filesCreated.length === 0) {
@@ -216,34 +246,14 @@ export async function runReActLoop(
 
     // v10d: Only 1 file created but task requires more
     if (action.name === 'writeFile' && filesCreated.length === 1) {
-      const multiFileKeywords = ['структуру', 'файлы:', 'следующую', 'структура файлов', 'создай:', ' - ', 'report', 'отчёт', 'fixed', 'report.txt', 'отчёт.txt', 'README', '', ''];
-      const needsMoreFiles = multiFileKeywords.some(k => userPrompt.includes(k));
+      const needsMoreFiles = await classifyPrompt(userPrompt,
+        'Does the user ask to create multiple files, a file structure, or a project with several files?');
       if (needsMoreFiles && step < maxSteps - 1) {
         history.push({ role: 'user',
           content: `Создан только 1 файл (${filesCreated[0]}), но задача требует нескольких!  Проверьте условие и создайте ОСТАЛЬНЫЕ файлы через writeFile!` });
       }
     }
 
-    // v8: 3+ identical writes → stop repetition
-    if (step >= 5 && filesCreated.length > 0) {
-      const lastThree = toolCalls.slice(-3);
-      const allWriteSame = lastThree.length >= 3 &&
-        lastThree.every(c => c.tool === 'writeFile') &&
-        lastThree.every(c => JSON.stringify(c.args) === JSON.stringify(lastThree[0].args));
-      if (allWriteSame) {
-        history.push({ role: 'user',
-          content: 'Вы повторяете запись того же файла.  Задача либо завершена либо нужно создать ДРУГИЕ файлы.  Проверьте требования.' });
-      }
-    }
-
-    // v10: Repeated writeFile to same path
-    if (step >= 3 && action.name === 'writeFile') {
-      const recentWrites = toolCalls.filter(c => c.tool === 'writeFile' && c.args?.path === action.args?.path);
-      if (recentWrites.length >= 2) {
-        history.push({ role: 'user',
-          content: `Вы записали "${action.args?.path}" ${recentWrites.length} раза!  Задача выполнена?  Если нет — используйте readDir для проверки.` });
-      }
-    }
 
     // Periodic summary every 7 steps
     if (step - lastSummaryAt >= 7 && step < maxSteps) {
@@ -255,23 +265,13 @@ export async function runReActLoop(
       lastSummaryAt = step;
     }
 
-    // Loop detection: 3+ repeated call pairs
-    const callSig = `${action.name}:${JSON.stringify(action.args)}`;
-    recentCalls.push(callSig);
-    if (recentCalls.length > 6) recentCalls.shift();
-    if (recentCalls.length >= 6 &&
-        recentCalls[0] === recentCalls[2] && recentCalls[2] === recentCalls[4] &&
-        recentCalls[1] === recentCalls[3] && recentCalls[3] === recentCalls[5]) {
+    // [B6] LLM-based loop detection
+    if (await isLooping(toolCalls, step)) {
       history.push({ role: 'user',
         content: 'ВНИМАНИЕ: обнаружено зацикливание.  Вы вызываете одни и те же инструменты.  Попробуйте другой подход или завершите задачу.' });
     }
 
-    // v7: 4+ reads with 0 writes
-    const readCount = toolCalls.filter(c => c.tool === 'readFile' || c.tool === 'readDir').length;
-    if (readCount >= 4 && filesCreated.length === 0) {
-      history.push({ role: 'user',
-        content: `ВНИМАНИЕ: вы прочитали ${readCount} файлов/директорий но не создали ни одного выходного файла.  Объедините данные и запишите через writeFile!  НЕ читайте больше!` });
-    }
+
   }
 
   // v11: Post-loop — if files were read but nothing written, force one more step
@@ -305,7 +305,40 @@ export async function runReActLoop(
 // ─── Helper: detect research prompts ───────────────────────────
 
 export async function isResearchPrompt(prompt: string): Promise<boolean> {
-  const systemPrompt = "You are a classifier. Determine if the following user prompt is a research task that requires external search or factual verification. Answer only YES or NO.";
-  const response = await queryLLM([{ role: "user", content: systemPrompt + "\n\nPrompt: " + prompt }]);
-  return response.trim().toUpperCase() === "YES";
+  return classifyPrompt(prompt,
+    'Is this a research task that requires external search or factual verification?');
+}
+
+// ─── Generic LLM classifier ─────────────────────────────────────
+
+const classificationCache = new Map<string, boolean>();
+
+export async function classifyPrompt(prompt: string, question: string): Promise<boolean> {
+  const cacheKey = question + '\n' + prompt;
+  const cached = classificationCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+  const systemPrompt = `You are a binary classifier. Answer only YES or NO.\n\n${question}\n\nUser prompt: "${prompt}"`;
+  try {
+    const response = await queryLLM([{ role: 'user', content: systemPrompt }]);
+    const result = response.trim().toUpperCase() === 'YES';
+    classificationCache.set(cacheKey, result);
+    return result;
+  } catch {
+    classificationCache.set(cacheKey, false);
+    return false;
+  }
+}
+
+function buildActionSummary(toolCalls: ToolCallRecord[], lastN: number = 8): string {
+  const recent = toolCalls.slice(-lastN);
+  return recent.map((c, i) => `${i + 1}. ${c.tool}(${JSON.stringify(c.args)})`).join('\n');
+}
+
+async function isLooping(toolCalls: ToolCallRecord[], step: number): Promise<boolean> {
+  if (step < 3 || toolCalls.length < 3) return false;
+  const summary = buildActionSummary(toolCalls);
+  return classifyPrompt(
+    `Recent actions (step ${step}):\n${summary}`,
+    'Is the agent stuck in a loop or repeating the same actions without making progress? Answer YES if there is clear repetition or cycling, NO otherwise.'
+  );
 }

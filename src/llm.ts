@@ -10,7 +10,7 @@ export async function queryLLM(messages: Message[], retries = DEFAULT_RETRIES): 
       const response = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: modelName, messages, temperature: 0.7 }),
+        body: JSON.stringify({ model: modelName, messages, temperature: 0.7, max_tokens: 400 }),
         signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
       });
 
@@ -26,14 +26,16 @@ export async function queryLLM(messages: Message[], retries = DEFAULT_RETRIES): 
       }
 
       const data = await response.json() as any;
-      if (!data.choices?.[0]?.message?.content) {
+      const msg = data.choices?.[0]?.message;
+      const content = msg?.content || msg?.reasoning_content;
+      if (!content) {
         if (attempt < retries) {
           await sleep(RETRY_BASE_DELAY_MS * attempt);
           continue;
         }
         throw new Error('Empty response from LLM');
       }
-      return data.choices[0].message.content;
+      return content;
     } catch (e: any) {
       if (attempt < retries) {
         await sleep(RETRY_BASE_DELAY_MS * attempt);

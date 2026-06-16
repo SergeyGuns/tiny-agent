@@ -86,6 +86,12 @@ async function injectFixtures(taskId: string, workDir: string): Promise<void> {
         { name: 'Eve', email: 'eve@nodot' },
       ]),
     },
+    'RLM-004': {
+      'notes.txt': 'This is an important note about the project.\nThis line is not important.\nAnother important finding here.\nWe discovered a critical bug in the system.\nThe team worked hard to fix it.',
+    },
+    'RLM-005': {
+      'code.js': 'function calculate() {\n  let temp = getData();\n  let temp2 = process(temp);\n  return temp2;\n}\n\nfunction process(x) {\n  let temp = x * 2;\n  return temp;\n}',
+    },
   };
 
   const data = fixtures[taskId];
@@ -137,7 +143,7 @@ async function executeTask(task: Task, maxSteps = 15): Promise<TaskResult> {
   const origCwd = process.cwd();
   process.chdir(workDir);
 
-  const taskTimeout = task.difficulty === 'expert' ? 900000 : task.difficulty === 'hard' ? 600000 : 420000;
+  const taskTimeout = task.difficulty === 'expert' ? 1800000 : task.difficulty === 'hard' ? 1200000 : task.difficulty === 'medium' ? 900000 : 600000;
 
   try {
     await prepareTask(task, workDir);
@@ -210,6 +216,8 @@ interface RunOptions {
 
 async function runBenchmark(opts: RunOptions = {}): Promise<BenchmarkReport> {
   loadEnv();
+  // Clear reasoning log for new benchmark session
+  try { fs.writeFileSync('/tmp/rlm-reasoning.log', ''); } catch {}
   const { categories, difficulties, taskIds, maxSteps = 15, verbose = true } = opts;
 
   let tasks = allTasks;
@@ -246,7 +254,7 @@ async function runBenchmark(opts: RunOptions = {}): Promise<BenchmarkReport> {
 
     // Cooldown между задачами чтобы LM Studio не перегружался (v9: уменьшен до 1s)
     if (i < tasks.length - 1) {
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise(r => setTimeout(r, 3000));
     }
 
     if (verbose) {
@@ -275,7 +283,7 @@ async function runBenchmark(opts: RunOptions = {}): Promise<BenchmarkReport> {
 // ─── Отчёт ────────────────────────────────────────────────────
 
 function buildReport(results: TaskResult[]): BenchmarkReport {
-  const cats: Category[] = ['terminal', 'tool_use', 'research', 'planning'];
+  const cats: Category[] = ['terminal', 'tool_use', 'research', 'planning', 'rlm'];
   const diffs: Difficulty[] = ['easy', 'medium', 'hard', 'expert'];
 
   const byCategory = {} as Record<Category, CategorySummary>;

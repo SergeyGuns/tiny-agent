@@ -81,7 +81,10 @@ export const tools: Record<string, ToolFunction> = {
 
   writeFile: (args: Record<string, unknown>) => {
     try {
-      const p = path.resolve(args.path as string);
+      // Accept "path", "file", "filename", or "file_name" as the file path key
+      const rawPath = (args.path ?? args.file ?? args.filename ?? args.file_name) as string;
+      if (!rawPath || typeof rawPath !== 'string') return 'writeFile: нужен path';
+      const p = path.resolve(rawPath);
       const dir = path.dirname(p);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       let content = args.content as string;
@@ -175,12 +178,22 @@ export const tools: Record<string, ToolFunction> = {
           model: modelName,
           messages: [{ role: 'user', content: prompt }],
           temperature: 0.7,
+          max_tokens: 500,
         }),
-        signal: AbortSignal.timeout(60000),
+        signal: AbortSignal.timeout(300000),
       });
       if (!res.ok) return `rlm: HTTP ${res.status}`;
       const data = await res.json() as any;
-      return data.choices?.[0]?.message?.content || 'rlm: empty response';
+      const msg = data.choices?.[0]?.message;
+      const content = msg?.content || msg?.reasoning_content || 'rlm: empty response';
+      // Log reasoning for analysis (append to single file)
+      const reasoning = msg?.reasoning_content || '';
+      if (reasoning) {
+        const fs = await import('node:fs');
+        const logLine = [new Date().toISOString(), modelName, JSON.stringify(prompt), JSON.stringify(reasoning)].join('\t') + '\n';
+        fs.appendFileSync('/tmp/rlm-reasoning.log', logLine);
+      }
+      return content;
     } catch (e: any) {
       return `rlm: ${e.message?.substring(0, 200)}`;
     }

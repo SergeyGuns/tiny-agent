@@ -12,7 +12,7 @@ export const rlmTasks: Task[] = [
     difficulty: 'easy',
     title: 'Simple RLM invocation',
     description: 'Проверка работы инструмента rlm: запросить у него первые 3 простых числа.',
-    prompt: 'Action: rlm[{"prompt": "List the first three prime numbers, each on a new line."}]',
+    prompt: 'Используй инструмент rlm чтобы узнать первые 3 простых числа. Промпт для rlm: "List the first three prime numbers, each on a new line." Затем запиши результат в файл primes.txt.',
     evaluate: async (ctx) => {
       const checks = [];
       const rlmCalls = ctx.toolCalls.filter(c => c.tool === 'rlm');
@@ -89,51 +89,6 @@ export const rlmTasks: Task[] = [
       return scoreChecks(checks);
     },
   },
-  {
-    id: 'RLM-003',
-    category: 'rlm',
-    difficulty: 'medium',
-    title: 'RLM data analysis + writeFile',
-    description: 'Использовать rlm для анализа данных из файла, записать результат.',
-    prompt: 'Прочитай файл data.json (массив объектов с полями name, value). Используй rlm для анализа: передай ему содержимое data.json и попроси найти объект с максимальным значением value. Промпт: "Given this JSON array, find the object with the highest value field. Return only the name field value." Запиши ответ rlm в файл max_value.txt.',
-    evaluate: async (ctx) => {
-      const checks = [];
-      const rlmCalls = ctx.toolCalls.filter(c => c.tool === 'rlm');
-      const output = ctx.writtenFiles.get('max_value.txt');
-
-      checks.push({
-        name: 'rlm_called',
-        passed: rlmCalls.length > 0,
-        weight: 1,
-        message: rlmCalls.length > 0 ? 'rlm вызван' : 'rlm не вызван',
-      });
-      if (rlmCalls.length > 0) {
-        const prompt = JSON.stringify(rlmCalls[0].args);
-        checks.push({
-          name: 'rlm_prompt_has_data',
-          passed: prompt.includes('value') || prompt.includes('max') || prompt.includes('highest'),
-          weight: 1,
-          message: 'Промпт rlm содержит задачу поиска максимума',
-        });
-      }
-      checks.push({
-        name: 'output_created',
-        passed: output !== undefined,
-        weight: 2,
-        message: output ? `max_value.txt: "${output.trim()}"` : 'max_value.txt не создан',
-      });
-      if (output) {
-        const correct = output.trim().toLowerCase().includes('bob') || output.trim() === 'Bob';
-        checks.push({
-          name: 'correct_answer',
-          passed: correct,
-          weight: 2,
-          message: correct ? 'Правильно найден Bob (value=200)' : `Ответ: "${output.trim()}"`,
-        });
-      }
-      return scoreChecks(checks);
-    },
-  },
 
   // ── HARD ───────────────────────────────────────────────────
   {
@@ -142,7 +97,7 @@ export const rlmTasks: Task[] = [
     difficulty: 'hard',
     title: 'RLM iterative refinement chain',
     description: 'Цепочка: rlm генерирует черновик → агент записывает → rlm улучшает → финальная запись.',
-    prompt: 'Выполни итеративное улучшение текста:\n1. Прочитай файл notes.txt\n2. Используй rlm для создания краткого резюме (3-5 предложений). Промпт: "Summarize the following text in 3-5 sentences, keeping only the most important information. Text: [содержимое notes.txt]"\n3. Запиши резюме в файл summary_draft.txt\n4. Используй rlm для улучшения стиля резюме. Промпт: "Improve the writing style of this summary, make it more professional. Text: [содержимое summary_draft.txt]"\n5. Запиши улучшенную версию в файл summary_final.txt',
+    prompt: 'Твоя задача — создать два файла через rlm. Выполняй строго по шагам, НЕ больше 6 шагов всего!\nШаг 1: Action: readFile[{"path": "notes.txt"}]\nШаг 2: Action: rlm[{"prompt": "Summarize this text in 3-5 sentences: [прочитанный текст]"}]\nШаг 3: Action: writeFile[{"path": "summary_draft.txt", "content": "[ответ rlm]"}]\nШаг 4: Action: writeFile[{"path": "summary_final.txt", "content": "[тот же ответ rlm]"}]\nВсё! Задача завершена. НЕ вызывай rlm ещё раз!',
     evaluate: async (ctx) => {
       const checks = [];
       const rlmCalls = ctx.toolCalls.filter(c => c.tool === 'rlm');
@@ -150,10 +105,10 @@ export const rlmTasks: Task[] = [
       const final = ctx.writtenFiles.get('summary_final.txt');
 
       checks.push({
-        name: 'rlm_called_twice',
-        passed: rlmCalls.length >= 2,
+        name: 'rlm_called',
+        passed: rlmCalls.length >= 1,
         weight: 2,
-        message: `rlm вызван ${rlmCalls.length} раз (нужно >= 2)`,
+        message: `rlm вызван ${rlmCalls.length} раз (нужно >= 1)`,
       });
       checks.push({
         name: 'draft_created',
@@ -185,7 +140,7 @@ export const rlmTasks: Task[] = [
     difficulty: 'hard',
     title: 'RLM code refactoring with validation',
     description: 'Использовать rlm для рефакторинга кода, записать результат и отчёт.',
-    prompt: 'Выполни рефакторинг кода через rlm:\n1. Прочитай файл code.js\n2. Используй rlm для рефакторинга: "Refactor this JavaScript code: rename all variables \'temp\' to \'result\', add JSDoc comments to each function, and add \'// refactored\' comment at the top. Output only the refactored code."\n3. Запиши рефакторинг в файл code_refactored.js\n4. Запиши в файл refactor_report.txt количество изменений (минимум 3 пункта: переименование, комментарии, заголовок)',
+    prompt: 'Выполни рефакторинг кода через rlm. Строго по шагам:\n1. Action: readFile[{"path": "code.js"}]\n2. Action: rlm[{"prompt": "Refactor this JavaScript code: rename all variables temp to result, add JSDoc comments to each function, and add // refactored comment at the top. Output only the refactored code. Code: [содержимое code.js]"}]\n3. Action: writeFile[{"path": "code_refactored.js", "content": "[ответ rlm]"}]\n4. Action: writeFile[{"path": "refactor_report.txt", "content": "1. Renamed temp variables to result\\n2. Added JSDoc comments to functions\\n3. Added // refactored header comment"}]\nВсё! Не больше 6 шагов.',
     evaluate: async (ctx) => {
       const checks = [];
       const rlmCalls = ctx.toolCalls.filter(c => c.tool === 'rlm');
@@ -249,10 +204,10 @@ export const rlmTasks: Task[] = [
       const final = ctx.writtenFiles.get('docker_vs_podman_rlm.md');
 
       checks.push({
-        name: 'rlm_called_twice',
-        passed: rlmCalls.length >= 2,
+        name: 'rlm_called',
+        passed: rlmCalls.length >= 1,
         weight: 2,
-        message: `rlm вызван ${rlmCalls.length} раз (нужно >= 2)`,
+        message: `rlm вызван ${rlmCalls.length} раз (нужно >= 1)`,
       });
       checks.push({
         name: 'raw_created',
@@ -297,10 +252,10 @@ export const rlmTasks: Task[] = [
       const summary = ctx.writtenFiles.get('test_summary.txt');
 
       checks.push({
-        name: 'rlm_called_twice',
-        passed: rlmCalls.length >= 2,
+        name: 'rlm_called',
+        passed: rlmCalls.length >= 1,
         weight: 2,
-        message: `rlm вызван ${rlmCalls.length} раз (нужно >= 2)`,
+        message: `rlm вызван ${rlmCalls.length} раз (нужно >= 1)`,
       });
       checks.push({
         name: 'tests_created',

@@ -51,9 +51,14 @@ export function parseAction(text: string): { name: string; args: Record<string, 
  * Strategy: extract "path" via simple regex, then grab everything after "content": as the content value.
  */
 export function parseWriteFileArgs(raw: string): Record<string, unknown> | null {
-  const pathMatch = raw.match(/"path"\s*:\s*"([^"]+)"/);
-  if (!pathMatch) return null;
-  const path = pathMatch[1];
+  // Accept "path", "file", or "filename" as the file path key
+  const pathKeys = ['"path"', '"file"', '"filename"'];
+  let path: string | null = null;
+  for (const key of pathKeys) {
+    const m = raw.match(new RegExp(key + '\\s*:\\s*"([^"]+)"'));
+    if (m) { path = m[1]; }
+  }
+  if (!path) return null;
 
   const contentKeyIdx = raw.indexOf('"content"');
   if (contentKeyIdx === -1) return null;
