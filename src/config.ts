@@ -23,7 +23,7 @@ export function loadEnv(): void {
 
 export const DEFAULT_LM_STUDIO_URL = 'http://localhost:1234/v1';
 export const DEFAULT_LM_STUDIO_MODEL = 'qwen/qwen3.5-9b';
-export const DEFAULT_MAX_STEPS = 15;
+export const DEFAULT_MAX_STEPS = 50;
 export const DEFAULT_RETRIES = 3;
 export const DEFAULT_TEMPERATURE = 0.7;
 export const RESULT_TRUNCATE_LENGTH = 2000;
@@ -32,3 +32,83 @@ export const LLM_TIMEOUT_MS = 60000;
 export const COMMAND_TIMEOUT_MS = 30000;
 export const RETRY_BASE_DELAY_MS = 2000;
 export const UNLOADED_RETRY_DELAY_MS = 10000;
+
+// ─── Provider config ──────────────────────────────────────────
+
+export interface Provider {
+  name: string;
+  url: string;
+  model: string;
+  apiKey?: string;
+}
+
+const PROVIDERS_PATH = 'providers.json';
+
+export function loadProviders(): Provider[] {
+  try {
+    const raw = fs.readFileSync(path.resolve(process.cwd(), PROVIDERS_PATH), 'utf-8');
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+
+export function saveProviders(providers: Provider[]): void {
+  fs.writeFileSync(path.resolve(process.cwd(), PROVIDERS_PATH), JSON.stringify(providers, null, 2));
+}
+
+export function getActiveProvider(): Provider | null {
+  const url = process.env.LM_STUDIO_URL;
+  const model = process.env.LM_STUDIO_MODEL;
+  if (!url || !model) return null;
+  const providers = loadProviders();
+  return providers.find(p => p.url === url && p.model === model) ?? null;
+}
+
+export function setActiveProvider(provider: Provider): void {
+  process.env.LM_STUDIO_URL = provider.url;
+  process.env.LM_STUDIO_MODEL = provider.model;
+  if (provider.apiKey) process.env.OPENAI_API_KEY = provider.apiKey;
+  else delete process.env.OPENAI_API_KEY;
+  writeEnvFile(provider);
+}
+
+function writeEnvFile(provider: Provider): void {
+  const envPath = path.resolve(process.cwd(), '.env');
+  let content = '';
+  try { content = fs.readFileSync(envPath, 'utf-8'); } catch { /* no .env yet */ }
+
+  const lines = content.split('\n');
+  const keys = ['LM_STUDIO_URL', 'LM_STUDIO_MODEL', 'OPENAI_API_KEY'];
+  const newLines: string[] = [];
+
+  const existing = new Map<string, string>();
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx === -1) continue;
+    existing.set(trimmed.slice(0, eqIdx).trim(), trimmed.slice(eqIdx + 1).trim());
+  }
+
+  existing.set('LM_STUDIO_URL', provider.url);
+  existing.set('LM_STUDIO_MODEL', provider.model);
+  if (provider.apiKey) existing.set('OPENAI_API_KEY', provider.apiKey);
+  else existing.delete('OPENAI_API_KEY');
+
+  for (const key of keys) {
+    const val = existing.get(key);
+    if (val !== undefined) newLines.push(`${key}=${val}`);
+  }
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx === -1) continue;
+    const k = trimmed.slice(0, eqIdx).trim();
+    if (!keys.includes(k)) newLines.push(line);
+  }
+
+  fs.writeFileSync(envPath, newLines.join('\n') + '\n');
+}
