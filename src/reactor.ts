@@ -38,7 +38,17 @@ export async function runReActLoop(
 
   for (let step = 1; step <= maxSteps; step++) {
     callbacks?.onContextUpdate?.(history);
-    const response = await queryLLM(history, LLM_PROFILES[profile]);
+    let response: string;
+    try {
+      response = await queryLLM(history, LLM_PROFILES[profile]);
+    } catch (e) {
+      if (step < maxSteps) {
+        history.push({ role: 'user', content: 'LLM returned empty response. Try again.' });
+        continue;
+      }
+      callbacks?.onComplete?.(step);
+      return { steps: step, toolCalls };
+    }
     history.push({ role: 'assistant', content: response });
     callbacks?.onStep?.(step, response);
 
@@ -270,7 +280,13 @@ export async function runReActLoop(
     history.push({ role: 'user',
       content: `WARNING: read ${totalReads} files (${readPaths.join(', ')}) but NO write! Use write_file_content NOW! Last step!` });
     callbacks?.onContextUpdate?.(history);
-    const finalResponse = await queryLLM(history, LLM_PROFILES[profile]);
+    let finalResponse: string;
+    try {
+      finalResponse = await queryLLM(history, LLM_PROFILES[profile]);
+    } catch (e) {
+      callbacks?.onComplete?.(maxSteps);
+      return { steps: maxSteps, toolCalls };
+    }
     history.push({ role: 'assistant', content: finalResponse });
     const finalAction = parseAction(finalResponse);
     if (finalAction) {
@@ -311,10 +327,20 @@ export async function runPlanLoop(
 
   for (let step = 1; step <= maxSteps; step++) {
     callbacks?.onContextUpdate?.(history);
-    const response = await queryLLM(history, {
-      ...LLM_PROFILES.plan,
-      toolsFilter: PLAN_ALLOWED_TOOLS,
-    });
+    let response: string;
+    try {
+      response = await queryLLM(history, {
+        ...LLM_PROFILES.plan,
+        toolsFilter: PLAN_ALLOWED_TOOLS,
+      });
+    } catch (e) {
+      if (step < maxSteps) {
+        history.push({ role: 'user', content: 'LLM returned empty response. Try again.' });
+        continue;
+      }
+      callbacks?.onComplete?.(step);
+      return { steps: step, toolCalls };
+    }
     history.push({ role: 'assistant', content: response });
     callbacks?.onStep?.(step, response);
 
