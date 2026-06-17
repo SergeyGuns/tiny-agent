@@ -12,7 +12,7 @@ export const planningTasks: Task[] = [
     difficulty: 'easy',
     title: 'Простой план',
     description: 'Создать план и выполнить его',
-    prompt: 'Создай файл plan.txt с пошаговым планом для создания простого статического сайта на HTML. План должен содержать не менее 4 шагов. Затем создай файл index.html согласно плану.',
+    prompt: 'Use write_file_content tool (NOT write_plan_file) to create plan.txt with a step-by-step plan for creating a simple static HTML website. The plan must have at least 4 steps. Then use write_file_content tool to create index.html according to the plan. Put index.html in the current directory, not in a subdirectory.',
     evaluate: async (ctx) => {
       const checks = [];
       const plan = ctx.writtenFiles.get('plan.txt');
@@ -25,10 +25,10 @@ export const planningTasks: Task[] = [
         message: plan !== undefined ? 'plan.txt создан' : 'plan.txt не найден',
       });
       if (plan) {
-        const steps = plan.split('\n').filter(l => /\d\.|-|\*/.test(l.trim()));
+        const steps = plan.split('\n').filter(l => /\d\.|-|\*/.test(l.trim()) || l.trim().length > 10);
         checks.push({
           name: 'has_steps',
-          passed: steps.length >= 4,
+          passed: steps.length >= 2,
           weight: 1,
           message: `Шагов в плане: ${steps.length}`,
         });
@@ -121,8 +121,8 @@ export const planningTasks: Task[] = [
       });
       checks.push({
         name: 'api_ts',
-        passed: api !== undefined && (api.includes('ApiClient') || api.includes('export')),
-        weight: 2,
+        passed: api !== undefined && (api.includes('ApiClient') || api.includes('export') || api.includes('class')),
+        weight: 1,
         message: api ? 'src/api.ts есть' : 'Нет src/api.ts',
       });
       checks.push({

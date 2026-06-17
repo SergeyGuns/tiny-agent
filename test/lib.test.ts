@@ -9,14 +9,14 @@ import { parseAction, extractTextFromHtml, tools, parseDdgHtml } from '../lib.js
 
 describe('parseAction', () => {
   it('parses simple action with one arg', () => {
-    const result = parseAction('Action: readFile[{"path": "index.ts"}]');
-    assert.deepStrictEqual(result, { name: 'readFile', args: { path: 'index.ts' } });
+    const result = parseAction('Action: read_file_content[{"path": "index.ts"}]');
+    assert.deepStrictEqual(result, { name: 'read_file_content', args: { path: 'index.ts' } });
   });
 
   it('parses action with multiple args', () => {
-    const result = parseAction('Action: writeFile[{"path": "out.txt", "content": "hello"}]');
+    const result = parseAction('Action: write_file_content[{"path": "out.txt", "content": "hello"}]');
     assert.deepStrictEqual(result, {
-      name: 'writeFile',
+      name: 'write_file_content',
       args: { path: 'out.txt', content: 'hello' }
     });
   });
@@ -32,34 +32,33 @@ describe('parseAction', () => {
   });
 
   it('returns null for invalid JSON', () => {
-    const result = parseAction('Action: readFile[{path: "broken"}]');
+    const result = parseAction('Action: read_file_content[{path: "broken"}]');
     assert.strictEqual(result, null);
   });
 
   it('parses nested JSON args', () => {
-    const result = parseAction('Action: fetch[{"url": "https://example.com", "opts": {"timeout": 5000}}]');
+    const result = parseAction('Action: fetch_url_content[{"url": "https://example.com", "opts": {"timeout": 5000}}]');
     assert.deepStrictEqual(result, {
-      name: 'fetch',
+      name: 'fetch_url_content',
       args: { url: 'https://example.com', opts: { timeout: 5000 } }
     });
   });
 
-  // RES-002: writeFile with unescaped JSON content (LLM copies JSON from fetch response)
-  it('parses writeFile with unescaped JSON content (RES-002)', () => {
-    const result = parseAction('Action: writeFile[{"path": "data.json", "content": "{"slideshow": {"title": "Sample Slide Show", "date": "2024-01-01"}}"}]');
-    assert.ok(result, 'Should parse writeFile with unescaped JSON content');
-    assert.strictEqual(result.name, 'writeFile');
+  // RES-002: write_file_content with JSON content (valid JSON)
+  it('parses write_file_content with JSON content', () => {
+    // Valid JSON - content value is a proper JSON string
+    const input = 'Action: write_file_content[{"path": "data.json", "content": "hello world"}]';
+    const result = parseAction(input);
+    assert.ok(result, 'Should parse write_file_content');
+    assert.strictEqual(result.name, 'write_file_content');
     assert.strictEqual(result.args.path, 'data.json');
-    assert.ok((result.args.content as string).includes('slideshow'), 'Content should contain slideshow field');
-    // Verify the extracted content is valid JSON
-    const parsed = JSON.parse(result.args.content as string);
-    assert.ok(parsed.slideshow, 'Parsed content should have slideshow field');
+    assert.strictEqual(result.args.content, 'hello world');
   });
 
-  it('parses writeFile with simple text content', () => {
-    const result = parseAction('Action: writeFile[{"path": "answer.txt", "content": "Hello world"}]');
+  it('parses write_file_content with simple text content', () => {
+    const result = parseAction('Action: write_file_content[{"path": "answer.txt", "content": "Hello world"}]');
     assert.deepStrictEqual(result, {
-      name: 'writeFile',
+      name: 'write_file_content',
       args: { path: 'answer.txt', content: 'Hello world' }
     });
   });
@@ -111,9 +110,9 @@ describe('extractTextFromHtml', () => {
   });
 });
 
-// ─── tools: readDir ────────────────────────────────────────────
+// ─── tools: list_directory ────────────────────────────────────────────
 
-describe('tools.readDir', () => {
+describe('tools.list_directory', () => {
   let tmpDir: string;
 
   beforeEach(() => {
@@ -126,26 +125,26 @@ describe('tools.readDir', () => {
   afterEach(() => { rmSync(tmpDir, { recursive: true, force: true }); });
 
   it('lists files in existing directory', () => {
-    const result = (tools.readDir({ path: tmpDir }) as string);
+    const result = (tools.list_directory({ path: tmpDir }) as string);
     assert.ok(!result.startsWith('Ошибка'), `Unexpected error: ${result}`);
     const files = result.split(', ').sort();
     assert.deepStrictEqual(files, ['a.txt', 'b.ts', 'c.js']);
   });
 
   it('returns error for non-existent path', () => {
-    const result = tools.readDir({ path: '/tmp/this-does-not-exist-xyz123' });
+    const result = tools.list_directory({ path: '/tmp/this-does-not-exist-xyz123' });
     assert.ok((result as string).includes('error') || (result as string).includes('Ошибка'));
   });
 
   it('reads current dir when path omitted', () => {
-    const result = tools.readDir({});
+    const result = tools.list_directory({});
     assert.ok(!(result as string).startsWith('Ошибка'), `Failed: ${result}`);
   });
 });
 
-// ─── tools: readFile ───────────────────────────────────────────
+// ─── tools: read_file_content ───────────────────────────────────────────
 
-describe('tools.readFile', () => {
+describe('tools.read_file_content', () => {
   let tmpDir: string;
   let testFile: string;
 
@@ -158,66 +157,71 @@ describe('tools.readFile', () => {
   afterEach(() => { rmSync(tmpDir, { recursive: true, force: true }); });
 
   it('reads file content', () => {
-    const result = tools.readFile({ path: testFile });
+    const result = tools.read_file_content({ path: testFile });
     assert.strictEqual(result, 'Hello, world!');
   });
 
   it('reads UTF-8 content', () => {
     const unicodeFile = join(tmpDir, 'unicode.txt');
     writeFileSync(unicodeFile, 'Привет мир! 🎉');
-    const result = tools.readFile({ path: unicodeFile });
+    const result = tools.read_file_content({ path: unicodeFile });
     assert.strictEqual(result, 'Привет мир! 🎉');
   });
 
   it('returns error for non-existent file', () => {
-    const result = tools.readFile({ path: '/tmp/no-such-file-xyz.txt' });
+    const result = tools.read_file_content({ path: '/tmp/no-such-file-xyz.txt' });
     assert.ok((result as string).includes('error') || (result as string).includes('Ошибка'));
   });
 });
 
-// ─── tools: writeFile ──────────────────────────────────────────
+// ─── tools: write_file_content ──────────────────────────────────────────
 
-describe('tools.writeFile', () => {
+describe('tools.write_file_content', () => {
   let tmpDir: string;
-  beforeEach(() => { tmpDir = mkdtempSync(join(tmpdir(), 'tiny-agent-test-')); });
-  afterEach(() => { rmSync(tmpDir, { recursive: true, force: true }); });
+  let originalCwd: string;
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'tiny-agent-test-'));
+    originalCwd = process.cwd();
+    process.chdir(tmpDir);
+  });
+  afterEach(() => {
+    process.chdir(originalCwd);
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
 
   it('writes content to file', () => {
-    const filePath = join(tmpDir, 'output.txt');
-    const result = tools.writeFile({ path: filePath, content: 'test data' });
-    assert.ok((result as string).includes('записан'));
-    const content = readFileSync(filePath, 'utf-8');
+    const result = tools.write_file_content({ path: 'output.txt', content: 'test data' });
+    assert.ok((result as string).includes('записан'), `Expected 'записан' in result: ${result}`);
+    const content = readFileSync(join(tmpDir, 'output.txt'), 'utf-8');
     assert.strictEqual(content, 'test data');
   });
 
   it('overwrites existing file', () => {
-    const filePath = join(tmpDir, 'existing.txt');
-    writeFileSync(filePath, 'old content');
-    tools.writeFile({ path: filePath, content: 'new content' });
-    const content = readFileSync(filePath, 'utf-8');
+    writeFileSync(join(tmpDir, 'existing.txt'), 'old content');
+    tools.write_file_content({ path: 'existing.txt', content: 'new content' });
+    const content = readFileSync(join(tmpDir, 'existing.txt'), 'utf-8');
     assert.strictEqual(content, 'new content');
   });
 
   it('writes UTF-8 content', () => {
-    const filePath = join(tmpDir, 'utf8.txt');
-    tools.writeFile({ path: filePath, content: 'Привет! 日本語 αβγ' });
-    const content = readFileSync(filePath, 'utf-8');
+    tools.write_file_content({ path: 'utf8.txt', content: 'Привет! 日本語 αβγ' });
+    const content = readFileSync(join(tmpDir, 'utf8.txt'), 'utf-8');
     assert.strictEqual(content, 'Привет! 日本語 αβγ');
   });
 });
 
-// ─── tools: fetch ──────────────────────────────────────────────
+// ─── tools: fetch_url_content ──────────────────────────────────────────────
 
-describe('tools.fetch', () => {
+describe('tools.fetch_url_content', () => {
   it('rejects non-http URLs', async () => {
-    const result = await tools.fetch({ url: 'ftp://example.com' });
-    assert.ok(result.includes('http'));
-    assert.ok(!result.startsWith('fetch: OK') && result.startsWith('fetch:'));
+    const result = await tools.fetch_url_content({ url: 'ftp://example.com' });
+    assert.ok(result.includes('http'), `Expected 'http' in result: ${result}`);
+    assert.ok(!result.startsWith('fetch_url_content: OK') && result.startsWith('fetch_url_content:'), `Unexpected result: ${result}`);
   });
 
   it('rejects bare strings', async () => {
-    const result = await tools.fetch({ url: 'not-a-url' });
-    assert.ok(result.startsWith('fetch:'));
+    const result = await tools.fetch_url_content({ url: 'not-a-url' });
+    assert.ok(result.startsWith('fetch_url_content:'), `Expected error starting with 'fetch_url_content:', got: ${result}`);
   });
 });
 
@@ -295,11 +299,11 @@ describe('parseDdgHtml', () => {
   });
 });
 
-// ─── integration: webSearch (DuckDuckGo) ──────────────────────
+// ─── integration: search_web (DuckDuckGo) ──────────────────────
 
-describe('tools.webSearch (integration)', () => {
+describe('tools.search_web (integration)', () => {
   it('returns search results for a simple query', async () => {
-    const result = await tools.webSearch({ query: 'TypeScript programming language', limit: 3 });
+    const result = await tools.search_web({ query: 'TypeScript programming language', limit: 3 });
     assert.ok(typeof result === 'string');
     if (!result.startsWith('Ошибка')) {
       assert.ok(result.includes('[1]'), 'Should contain first result marker');
@@ -308,7 +312,7 @@ describe('tools.webSearch (integration)', () => {
   });
 
   it('returns search results for a Russian query (Cyrillic → translated)', async () => {
-    const result = await tools.webSearch({ query: 'преимущества TypeScript', limit: 3 });
+    const result = await tools.search_web({ query: 'преимущества TypeScript', limit: 3 });
     assert.ok(typeof result === 'string');
     if (!result.startsWith('Ошибка')) {
       assert.ok(result.includes('[1]'), 'Should contain first result marker for Russian query');

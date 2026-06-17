@@ -22,13 +22,13 @@ export function loadEnv(): void {
 // ─── LLM defaults ──────────────────────────────────────────────
 
 export const DEFAULT_LM_STUDIO_URL = 'http://localhost:1234/v1';
-export const DEFAULT_LM_STUDIO_MODEL = 'local-model';
+export const DEFAULT_LM_STUDIO_MODEL = 'qwen/qwen3.5-9b';
 export const DEFAULT_MAX_STEPS = 15;
-export const DEFAULT_RETRIES = 5;
+export const DEFAULT_RETRIES = 3;
 export const DEFAULT_TEMPERATURE = 0.7;
 export const RESULT_TRUNCATE_LENGTH = 2000;
 export const FETCH_TIMEOUT_MS = 15000;
-export const LLM_TIMEOUT_MS = 300000;
+export const LLM_TIMEOUT_MS = 60000;
 export const COMMAND_TIMEOUT_MS = 30000;
-export const RETRY_BASE_DELAY_MS = 5000;
+export const RETRY_BASE_DELAY_MS = 2000;
 export const UNLOADED_RETRY_DELAY_MS = 10000;

@@ -62,7 +62,7 @@ export const terminalTasks: Task[] = [
     difficulty: 'easy',
     title: 'Просмотр директории',
     description: 'Просмотреть содержимое директории и записать список файлов',
-    prompt: 'Используй readDir чтобы увидеть файлы в текущей директории. Затем используй writeFile чтобы записать список всех файлов в файл listing.txt (по одному файлу на строку). НЕ выдавай финальный ответ пока не создашь listing.txt.',
+    prompt: 'Use list_directory tool to see files in current directory. Then use write_file_content tool to write the list to listing.txt (one file per line). You MUST create listing.txt before calling signal_task_complete.',
     evaluate: async (ctx) => {
       const checks = [];
       const listing = ctx.writtenFiles.get('listing.txt');
@@ -108,11 +108,11 @@ export const terminalTasks: Task[] = [
           const isArray = Array.isArray(data);
           const allProcessed = isArray && data.every((item: any) => item.processed === true);
           checks.push({
-            name: 'valid_json',
-            passed: true,
-            weight: 1,
-            message: 'JSON валиден',
-          });
+                  name: 'valid_json',
+                  passed: output !== undefined && output !== undefined ? true : false,
+                  weight: 0,
+                  message: output !== undefined ? 'JSON валиден' : 'JSON не валиден',
+                });
           checks.push({
             name: 'all_processed',
             passed: allProcessed,

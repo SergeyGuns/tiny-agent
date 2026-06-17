@@ -1,10 +1,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { Message, ToolCallRecord } from '../types.js';
-import type { ToolFunction } from '../types.js';
-import { tools } from './tools.js';
+
 import { parseAction } from './parser.js';
 import { queryLLM } from './llm.js';
+import { LLM_PROFILES, LLMProfileName } from './llm.js';
 import { BENCH_SYSTEM_PROMPT } from './prompt.js';
 import { RESULT_TRUNCATE_LENGTH } from './config.js';
 
@@ -17,11 +17,11 @@ export interface ReActCallbacks {
 }
 
 // ─── ReAct loop ────────────────────────────────────────────────
-
 export async function runReActLoop(
   prompt: string,
   maxSteps: number = 15,
   callbacks?: ReActCallbacks,
+  profile: LLMProfileName = 'toolCall',
 ): Promise<{ steps: number; toolCalls: ToolCallRecord[] }> {
   const history: Message[] = [
     { role: 'system', content: BENCH_SYSTEM_PROMPT },
@@ -29,100 +29,82 @@ export async function runReActLoop(
   ];
   const toolCalls: ToolCallRecord[] = [];
   const filesCreated: string[] = [];
-  let lastSummaryAt = 0;
   let lastReadStep = 0;
   let emptySteps = 0;
-  let consecutiveCompletes = 0;
 
   for (let step = 1; step <= maxSteps; step++) {
-    const userPrompt = history.length > 1 ? history[1].content || '' : '';
-    const response = await queryLLM(history);
+    const response = await queryLLM(history, LLM_PROFILES[profile]);
     history.push({ role: 'assistant', content: response });
     callbacks?.onStep?.(step, response);
 
     const action = parseAction(response);
 
-    // v12: Detect STOP/done signals from thinking models
-    const isStopSignal = /\b(STOP|DONE|COMPLETE|FINISHED|ЗАВЕРШЕНО|ГОТОВО)\b/i.test(response) ||
-                         /task\s+(is\s+)?(done|complete|finished)/i.test(response) ||
-                         /^Action:\s*(STOP|DONE|COMPLETE|FINISHED)/i.test(response.trim());
-    if (isStopSignal && filesCreated.length > 0) {
+    // v12: Fast DONE detection
+    if (action && action.name === 'signal_task_complete') {
       callbacks?.onComplete?.(step);
       return { steps: step, toolCalls };
     }
-
-    // v10: Detect completion phrases
-    if (filesCreated.length > 0) {
-      const isCompleting = await classifyPrompt(response,
-        'Is the agent signaling that the task is done or complete (e.g. saying "ready", "done", "completed", "finished")?');
-      if (isCompleting) {
-        consecutiveCompletes++;
-        if (consecutiveCompletes >= 2) {
-          callbacks?.onComplete?.(step);
-          return { steps: step, toolCalls };
-        }
-      } else {
-        consecutiveCompletes = 0;
+    // v12: Natural language completion detection (no LLM call)
+    if (!action && filesCreated.length > 0) {
+      const r = response.trim();
+      if (/^(ЗАДАЧА ВЫПОЛНЕНА|ГОТОВО|ВСЁ СДЕЛАНО|ЗАВЕРШЕНО|COMPLETE|DONE|FINISHED|THAT IS ALL|THAT'S ALL)/i.test(r)
+          || /задача (выполнена|сделана|завершена)|task (complete|done|finished)/i.test(r)) {
+        callbacks?.onComplete?.(step);
+        return { steps: step, toolCalls };
       }
     }
 
     if (!action) {
       emptySteps++;
-
-      // v10c-fix: Research task with NO Action on early steps — strong nudge with example
-      if (step <= 2 && emptySteps >= 1) {
-        const isResearchTask = await isResearchPrompt(userPrompt);
-        if (isResearchTask) {
-          history.push({ role: 'user',
-            content: `ВНИМАНИЕ! Вы НЕ вызвали инструмент! НЕМЕДЛЕННО вызовите инструмент! Пример: Action: webSearch[{"query": "Docker vs Podman differences"}]  Используйте-webSearch!` });
-          emptySteps = 0;
-          continue;
-        }
-      }
-
-      // 3+ empty steps → force writeFile
-      if (emptySteps >= 3) {
+      // v12: Simple regex-based research detection (no LLM call)
+      const isResearch = /найди|поиск|исследу|информац|search|find|look up|research/i.test(prompt);
+      if (step <= 2 && emptySteps >= 1 && isResearch) {
         history.push({ role: 'user',
-          content: `ВНИМАНИЕ: вы уже ${emptySteps} шага не вызываете инструмент! Немедленно выполните действие через Action: writeFile!` });
+          content: `NO TOOL CALLED! Use: Action: search_web[{"query": "..."}]` });
         emptySteps = 0;
         continue;
       }
-
-      // Step 1 with no Action at all — push with concrete example
+      // 3+ empty steps → force writeFile
+      if (emptySteps >= 3) {
+        history.push({ role: 'user',
+          content: `NO TOOL ${emptySteps} steps! Use Action: write_file_content[{"path":"result.txt","content":"..."}]` });
+        emptySteps = 0;
+        continue;
+      }
+      // Step 1 no action
       if (step === 1) {
         history.push({ role: 'user',
-          content: `Вы не вызвали инструмент! Пример: Action: webSearch[{"query": "Docker vs Podman differences"}]  Action: writeFile[{"path": "result.txt", "content": "..."}]  Вызовите инструмент!` });
+          content: `NO TOOL! Example: Action: write_file_content[{"path":"result.txt","content":"..."}] Call a tool!` });
       } else {
-        const noActionPush = step <= 5
-          ? `Вы не вызвали инструмент (шаг ${step})! Используйте формат: Action: [{"ключ": "значение"}].  Например writeFile!`
-          : `Вы не вызвали инструмент (шаг ${step})!  Используйте writeFile!`;
-        history.push({ role: 'user', content: noActionPush });
+        history.push({ role: 'user',
+          content: `NO TOOL (step ${step})! Use Action: toolName[{"key":"value"}]` });
       }
       continue;
     }
     emptySteps = 0;
 
-    // v10c: Research task detected — push for immediate webSearch on step 1
+    // v12: Research task — push for webSearch on step 1 (regex, no LLM)
     if (step === 1 && filesCreated.length === 0) {
-      if (await isResearchPrompt(userPrompt) && action.name !== 'webSearch' && action.name !== 'fetch') {
-        const searchQuery = userPrompt.substring(0, 100).replace(/\n/g, ' ');
+      const isResearch = /найди|поиск|исследу|информац|search|find|look up|research/i.test(prompt);
+      if (isResearch && action.name !== 'search_web' && action.name !== 'fetch_url_content') {
+        const q = prompt.substring(0, 80).replace(/\n/g, ' ');
         history.push({ role: 'user',
-          content: `ВНИМАНИЕ! Начните с поиска! Используйте: Action: webSearch[{"query": "${searchQuery}"}]  НЕ читайте файлы — сначала поиск!` });
+          content: `START WITH SEARCH! Action: search_web[{"query": "${q}"}]` });
       }
     }
 
     if (action.args.error) {
-      history.push({ role: 'user', content: 'Observation: ошибка в аргументах.' });
+      history.push({ role: 'user', content: 'Observation: argument error.' });
       continue;
     }
 
     const toolFn = tools[action.name];
     if (!toolFn) {
-      history.push({ role: 'user', content: `Observation: инструмент "${action.name}" не найден.` });
+      history.push({ role: 'user', content: `Observation: tool "${action.name}" not found.` });
       continue;
     }
-    // [A3b] Normalize field names → expected tool args
-    if (action.name === 'writeFile') {
+    // Normalize field names
+    if (action.name === 'write_file_content') {
       if (!action.args.path && action.args.file) {
         action.args = { ...action.args, path: action.args.file };
         delete action.args.file;
@@ -133,154 +115,143 @@ export async function runReActLoop(
       }
     }
 
-
     const start = Date.now();
     let result: string;
     try {
       result = await toolFn(action.args);
-      // [A3a] Strip markdown code fences from rlm output
-      if (action.name === 'rlm' && typeof result === 'string') {
+      if (action.name === 'query_language_model' && typeof result === 'string') {
         result = result.replace(/^```(?:python|javascript|js|ts|json|html|css|sh|bash|txt|md)?\s*/m, '')
                          .replace(/\s*```$/m, '')
                          .trim();
       }
       if (typeof result !== 'string') result = String(result);
     } catch (e: any) {
-      result = `Ошибка: ${e.message?.substring(0, 200)}`;
+      result = `Error: ${e.message?.substring(0, 200)}`;
     }
     const durationMs = Date.now() - start;
 
     const truncatedResult = result.length > RESULT_TRUNCATE_LENGTH
-      ? result.substring(0, RESULT_TRUNCATE_LENGTH) + `\n... [обрезано, всего ${result.length} символов]`
+      ? result.substring(0, RESULT_TRUNCATE_LENGTH) + `\n... [truncated, total ${result.length} chars]`
       : result;
 
     toolCalls.push({ step, tool: action.name, args: action.args, result, durationMs });
     callbacks?.onToolCall?.(step, action.name, action.args, truncatedResult);
-    // [A1] Force-stop on N consecutive identical-tool errors
-    const CONSECUTIVE_ERROR_THRESHOLD = 3;
-    if (result.startsWith('Ошибка') || result.includes(' error')) {
-      const recentErrors = toolCalls.slice(-CONSECUTIVE_ERROR_THRESHOLD);
-      if (recentErrors.length >= CONSECUTIVE_ERROR_THRESHOLD &&
+
+    // v12: Too many searches without write → force write
+    const searchCount = toolCalls.filter(c => c.tool === 'search_web' || c.tool === 'fetch_url_content').length;
+    if (searchCount >= 2 && filesCreated.length === 0 && (action.name === 'search_web' || action.name === 'fetch_url_content')) {
+      history.push({ role: 'user',
+        content: `CRITICAL: After ${searchCount} ${action.name === 'fetch_url_content' ? 'fetch' : 'search'} calls, you MUST immediately write_file_content() to save your results! Do NOT call more tools without writing!` });
+    }
+    // Force write after fetch (guaranteed to have content)
+    if (action.name === 'fetch_url_content' && filesCreated.length === 0) {
+      history.push({ role: 'user',
+        content: `CRITICAL: fetch_url_content() completed! You MUST NOW write_file_content() to save this content. Do NOT continue searching!` });
+    }
+    // Long delay without action → force tool
+    if (step >= 3 && filesCreated.length === 0 && toolCalls.length === 0) {
+      history.push({ role: 'user',
+        content: `CRITICAL: Step ${step} with no tool calls! You MUST use a tool NOW! Example: write_file_content or search_web!` });
+    }
+
+    // Consecutive error stop
+    if (result.startsWith('Error') || result.startsWith('Ошибка') || result.includes(' error')) {
+      const recentErrors = toolCalls.slice(-3);
+      if (recentErrors.length >= 3 &&
           recentErrors.every(c => c.tool === action.name &&
-            (c.result.startsWith('Ошибка') || c.result.includes(' error')))) {
+            (c.result.startsWith('Error') || c.result.startsWith('Ошибка') || c.result.includes(' error')))) {
         callbacks?.onComplete?.(step);
         return { steps: step, toolCalls };
       }
     }
 
     // Track created files
-    if (action.name === 'writeFile' && !result.startsWith('Ошибка')) {
+    if (action.name === 'write_file_content' && !result.startsWith('Error') && !result.startsWith('Ошибка')) {
       const filePath = (action.args as any).path;
       if (filePath) filesCreated.push(filePath);
-      // [A4] Guard against creating excess files
       if (filesCreated.length > 6) {
         callbacks?.onComplete?.(step);
         return { steps: step, toolCalls };
       }
-
-      // v11b: Post-writeFile check for list/best-practices tasks
-      if (filePath && filePath.endsWith('.md')) {
-        const isListTask = await classifyPrompt(userPrompt,
-          'Does the user ask for a list, best practices, or enumerated items (like "best practices", "список", "лучшие практики")?');
-        if (isListTask) {
-          try {
-            const written = fs.readFileSync(filePath, 'utf-8');
-            const hasNumbered = /^\s*\d+\./m.test(written) || /^\s*[-*]/m.test(written);
-            if (!hasNumbered) {
+      // v12: Refactoring check — if task mentions rename/replace, verify result
+      const needsRefactor = /переимен|rename|refactor|replace|замени/i.test(prompt);
+      if (needsRefactor && filePath.endsWith('.js')) {
+        try {
+          const written = fs.readFileSync(path.resolve(filePath), 'utf-8');
+          const oldVar = prompt.match(/"(\w+)"\s*(→|to|в|->)\s*"(\w+)"/);
+          if (oldVar && oldVar[1] !== oldVar[3]) {
+            const re = new RegExp(`\\b${oldVar[1]}\\b`);
+            if (re.test(written)) {
               history.push({ role: 'user',
-                content: `Файл "${filePath}" создан без списка!  Исправьте: best practices должны быть пронумерованы (1. 2. 3.), минимум 3 пункта!` });
+                content: `File "${filePath}" still contains "${oldVar[1]}"! Replace ALL "${oldVar[1]}" with "${oldVar[3]}" and write_file_content again!` });
             }
-          } catch { /* file unreadable */ }
-        }
+          }
+        } catch { /* skip */ }
+      }
+      // v12: Research report check — if task asks for multiple sections, verify
+      const needsMultipleSections = /##|раздел|section|сравн|анализ/i.test(prompt) && filePath.endsWith('.md');
+      if (needsMultipleSections && step < maxSteps - 1) {
+        try {
+          const written = fs.readFileSync(path.resolve(filePath), 'utf-8');
+          const sectionCount = (written.match(/^#{1,3}\s+/gm) || []).length;
+          const expectedSections = (prompt.match(/##|раздел|section/gi) || []).length;
+          if (sectionCount < Math.min(expectedSections, 3)) {
+            history.push({ role: 'user',
+              content: `File "${filePath}" has only ${sectionCount} sections! The task requires sections like: Основные различия, Преимущества, Вывод. Add MISSING sections!` });
+          }
+        } catch { /* skip */ }
       }
     }
-    if (action.name === 'readDir' || action.name === 'readFile') {
+    // v12: Detect writeFile loop — same path written 3+ times without success
+    if (action.name === 'write_file_content' && result.startsWith('Error')) {
+      const filePath = (action.args as any).path;
+      const samePathErrors = toolCalls.filter(c => c.tool === 'write_file_content' && c.args?.path === filePath && c.result.startsWith('Error')).length;
+      if (samePathErrors >= 2) {
+        history.push({ role: 'user',
+          content: `STOP! "${filePath}" failed ${samePathErrors} times! Use SHORTER content (under 300 chars) or write to a different file!` });
+      }
+    }
+    if (action.name === 'list_directory' || action.name === 'read_file_content') {
       lastReadStep = step;
     }
 
-    // v10a: Immediate nudge after ANY readFile with 0 writes
-    const readFileCount = toolCalls.filter(c => c.tool === 'readFile').length;
-    if (readFileCount >= 1 && filesCreated.length === 0 && action.name === 'readFile' && step >= 2) {
-      const readPaths = toolCalls.filter(c => c.tool === 'readFile').map(c => c.args?.path).filter(Boolean);
+    // v12: Read-without-write nudges (simplified, no LLM)
+    const readFileCount = toolCalls.filter(c => c.tool === 'read_file_content').length;
+    if (readFileCount >= 1 && filesCreated.length === 0 && action.name === 'read_file_content' && step >= 2) {
+      const readPaths = toolCalls.filter(c => c.tool === 'read_file_content').map(c => c.args?.path).filter(Boolean);
       history.push({ role: 'user',
-        content: `Вы прочитали (${readPaths.join(', ')}), но ничего не записали!  Используйте writeFile для сохранения результата!  НЕ читайте больше!` });
+        content: `Read (${readPaths.join(', ')}) but NO write! Use write_file_content to save result! STOP reading!` });
     }
-    // v10b: Strong nudge after reading multiple data files (merge task)
-    if (readFileCount >= 3 && filesCreated.length === 0 && action.name === 'readFile') {
-      const readPaths = toolCalls.filter(c => c.tool === 'readFile').map(c => c.args?.path).filter(Boolean);
+    if (readFileCount >= 3 && filesCreated.length === 0 && action.name === 'read_file_content') {
       history.push({ role: 'user',
-        content: `Вы прочитали ${readFileCount} файлов (${readPaths.join(', ')}).  НЕМЕДЛЕННО объедините данные и запишите через writeFile! Пример: Action: writeFile[{"path": "all_users.json", "content": "[... объединённые данные ...]"}]` });
+        content: `Read ${readFileCount} files but NO write! MERGE data and write_file_content NOW!` });
     }
-    // v10c: JSON transform nudge
-    if ((await classifyPrompt(userPrompt, 'Does the user ask to transform, convert, or reformat JSON data?')) && readFileCount >= 1 && filesCreated.length === 0) {
-      history.push({ role: 'user', content: `Вы прочитали JSON.  НЕМЕДЛЕННО преобразуйте данные и запишите через writeFile!` });
-    }
-
-    history.push({ role: 'user', content: `Observation: ${truncatedResult}` });
-
-    // v9: runCommand failure → suggest alternatives
-
-    // v9b: read without subsequent write
+    // Read without subsequent write
     if (lastReadStep > 0 && step - lastReadStep >= 1 && filesCreated.length === 0) {
-      const lastReadCall = toolCalls.filter(c => c.tool === 'readDir' || c.tool === 'readFile').pop();
+      const lastReadCall = toolCalls.filter(c => c.tool === 'list_directory' || c.tool === 'read_file_content').pop();
       const readTarget = lastReadCall?.args?.path || '';
       history.push({ role: 'user',
-        content: `Вы прочитали "${readTarget}" — результат получен!  ТЕПЕРЬ запишите результат через writeFile!  НЕ читайте больше!` });
+        content: `Read "${readTarget}" — NOW write result via write_file_content! STOP reading!` });
+      lastReadStep = 0;
+    }
+    // Step 3+ with reads but 0 writes
+    if (step >= 3 && filesCreated.length === 0 && (action.name === 'list_directory' || action.name === 'read_file_content')) {
+      history.push({ role: 'user',
+        content: `Step ${step}, files created: 0. You only read, never write. Use write_file_content NOW.` });
       lastReadStep = 0;
     }
 
-    // Step 3+ with reads but 0 writes
-    if (step >= 3 && filesCreated.length === 0 && (action.name === 'readDir' || action.name === 'readFile')) {
-      history.push({ role: 'user',
-        content: `ВНИМАНИЕ: шаг ${step}, создано файлов: 0.  Вы только читаете но не записываете результат.  Немедленно используйте writeFile.` });
-    }
 
-    // v10d: Plan created → push with file enumeration
-    if (action.name === 'createPlan' && step < maxSteps - 2) {
-      const fileExtRe = /(\w+\.(?:html|css|js|ts|json|md|txt|csv|xml|yaml|yml|py|sh|rb|go|rs|java|c|cpp|h|hpp))/gi;
-      const expectedFiles = [...new Set((userPrompt.match(fileExtRe) || []).map(f => f.toLowerCase()))];
-      const fileList = expectedFiles.length > 0 ? expectedFiles.join(', ') : 'требуемые файлы';
-      history.push({ role: 'user',
-        content: `План создан!  ТЕПЕРЬ создайте файлы: ${fileList}.  Используйте writeFile для каждого файла.  Затем readDir для проверки!` });
-    }
-
-    // v10d: Only 1 file created but task requires more
-    if (action.name === 'writeFile' && filesCreated.length === 1) {
-      const needsMoreFiles = await classifyPrompt(userPrompt,
-        'Does the user ask to create multiple files, a file structure, or a project with several files?');
-      if (needsMoreFiles && step < maxSteps - 1) {
-        history.push({ role: 'user',
-          content: `Создан только 1 файл (${filesCreated[0]}), но задача требует нескольких!  Проверьте условие и создайте ОСТАЛЬНЫЕ файлы через writeFile!` });
-      }
-    }
-
-
-    // Periodic summary every 7 steps
-    if (step - lastSummaryAt >= 7 && step < maxSteps) {
-      const filesList = filesCreated.length > 0
-        ? filesCreated.slice(-3).join(', ')
-        : 'нет';
-      history.push({ role: 'user',
-        content: `[Шаг ${step}/${maxSteps}] Файлы: ${filesList}.  Завершите задачу.` });
-      lastSummaryAt = step;
-    }
-
-    // [B6] LLM-based loop detection
-    if (await isLooping(toolCalls, step)) {
-      history.push({ role: 'user',
-        content: 'ВНИМАНИЕ: обнаружено зацикливание.  Вы вызываете одни и те же инструменты.  Попробуйте другой подход или завершите задачу.' });
-    }
-
-
+    history.push({ role: 'user', content: `Observation: ${truncatedResult}` });
   }
 
-  // v11: Post-loop — if files were read but nothing written, force one more step
-  const totalReads = toolCalls.filter(c => c.tool === 'readFile' || c.tool === 'readDir').length;
+  // v12: Post-loop — if files were read but nothing written, force one more step
+  const totalReads = toolCalls.filter(c => c.tool === 'read_file_content' || c.tool === 'list_directory').length;
   if (totalReads >= 2 && filesCreated.length === 0) {
-    const readPaths = toolCalls.filter(c => c.tool === 'readFile').map(c => c.args?.path).filter(Boolean);
+    const readPaths = toolCalls.filter(c => c.tool === 'read_file_content').map(c => c.args?.path).filter(Boolean);
     history.push({ role: 'user',
-      content: `ВНИМАНИЕ: вы прочитали ${totalReads} файлов (${readPaths.join(', ')}) но не записали результат!  Используйте writeFile прямо сейчас!  Это последний шаг!` });
-    const finalResponse = await queryLLM(history);
+      content: `WARNING: read ${totalReads} files (${readPaths.join(', ')}) but NO write! Use write_file_content NOW! Last step!` });
+    const finalResponse = await queryLLM(history, LLM_PROFILES[profile]);
     history.push({ role: 'assistant', content: finalResponse });
     const finalAction = parseAction(finalResponse);
     if (finalAction) {
@@ -289,7 +260,7 @@ export async function runReActLoop(
         try {
           const finalResult = await toolFn(finalAction.args);
           toolCalls.push({ step: maxSteps + 1, tool: finalAction.name, args: finalAction.args, result: finalResult, durationMs: 0 });
-          if (finalAction.name === 'writeFile' && !finalResult.startsWith('Ошибка')) {
+          if (finalAction.name === 'write_file_content' && !finalResult.startsWith('Error') && !finalResult.startsWith('Ошибка')) {
             const filePath = (finalAction.args as any).path;
             if (filePath) filesCreated.push(filePath);
           }
@@ -300,45 +271,4 @@ export async function runReActLoop(
 
   callbacks?.onComplete?.(maxSteps);
   return { steps: maxSteps, toolCalls };
-}
-
-// ─── Helper: detect research prompts ───────────────────────────
-
-export async function isResearchPrompt(prompt: string): Promise<boolean> {
-  return classifyPrompt(prompt,
-    'Is this a research task that requires external search or factual verification?');
-}
-
-// ─── Generic LLM classifier ─────────────────────────────────────
-
-const classificationCache = new Map<string, boolean>();
-
-export async function classifyPrompt(prompt: string, question: string): Promise<boolean> {
-  const cacheKey = question + '\n' + prompt;
-  const cached = classificationCache.get(cacheKey);
-  if (cached !== undefined) return cached;
-  const systemPrompt = `You are a binary classifier. Answer only YES or NO.\n\n${question}\n\nUser prompt: "${prompt}"`;
-  try {
-    const response = await queryLLM([{ role: 'user', content: systemPrompt }]);
-    const result = response.trim().toUpperCase() === 'YES';
-    classificationCache.set(cacheKey, result);
-    return result;
-  } catch {
-    classificationCache.set(cacheKey, false);
-    return false;
-  }
-}
-
-function buildActionSummary(toolCalls: ToolCallRecord[], lastN: number = 8): string {
-  const recent = toolCalls.slice(-lastN);
-  return recent.map((c, i) => `${i + 1}. ${c.tool}(${JSON.stringify(c.args)})`).join('\n');
-}
-
-async function isLooping(toolCalls: ToolCallRecord[], step: number): Promise<boolean> {
-  if (step < 3 || toolCalls.length < 3) return false;
-  const summary = buildActionSummary(toolCalls);
-  return classifyPrompt(
-    `Recent actions (step ${step}):\n${summary}`,
-    'Is the agent stuck in a loop or repeating the same actions without making progress? Answer YES if there is clear repetition or cycling, NO otherwise.'
-  );
 }

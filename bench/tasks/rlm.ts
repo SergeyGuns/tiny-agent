@@ -11,11 +11,11 @@ export const rlmTasks: Task[] = [
     category: 'rlm',
     difficulty: 'easy',
     title: 'Simple RLM invocation',
-    description: 'Проверка работы инструмента rlm: запросить у него первые 3 простых числа.',
-    prompt: 'Используй инструмент rlm чтобы узнать первые 3 простых числа. Промпт для rlm: "List the first three prime numbers, each on a new line." Затем запиши результат в файл primes.txt.',
+    description: 'Проверка работы инструмента query_language_model: запросить у него первые 3 простых числа.',
+    prompt: 'Use the query_language_model tool to get the first three prime numbers. Prompt for query_language_model: "List the first three prime numbers, each on a new line." Then write the result to primes.txt.',
     evaluate: async (ctx) => {
       const checks = [];
-      const rlmCalls = ctx.toolCalls.filter(c => c.tool === 'rlm');
+      const rlmCalls = ctx.toolCalls.filter(c => c.tool === 'query_language_model');
       checks.push({
         name: 'rlm_called',
         passed: rlmCalls.length > 0,
@@ -46,7 +46,7 @@ export const rlmTasks: Task[] = [
     prompt: 'Используй rlm для генерации Python-скрипта, который вычисляет факториал числа 5. Промпт для rlm: "Write a Python script that calculates factorial of 5 and prints the result. Output only the code, no explanations." Полученный код запиши в файл factorial.py через writeFile. Затем запиши в файл result.txt ожидаемый результат (120).',
     evaluate: async (ctx) => {
       const checks = [];
-      const rlmCalls = ctx.toolCalls.filter(c => c.tool === 'rlm');
+      const rlmCalls = ctx.toolCalls.filter(c => c.tool === 'query_language_model');
       const code = ctx.writtenFiles.get('factorial.py');
       const result = ctx.writtenFiles.get('result.txt');
 
@@ -97,18 +97,18 @@ export const rlmTasks: Task[] = [
     difficulty: 'hard',
     title: 'RLM iterative refinement chain',
     description: 'Цепочка: rlm генерирует черновик → агент записывает → rlm улучшает → финальная запись.',
-    prompt: 'Твоя задача — создать два файла через rlm. Выполняй строго по шагам, НЕ больше 6 шагов всего!\nШаг 1: Action: readFile[{"path": "notes.txt"}]\nШаг 2: Action: rlm[{"prompt": "Summarize this text in 3-5 sentences: [прочитанный текст]"}]\nШаг 3: Action: writeFile[{"path": "summary_draft.txt", "content": "[ответ rlm]"}]\nШаг 4: Action: writeFile[{"path": "summary_final.txt", "content": "[тот же ответ rlm]"}]\nВсё! Задача завершена. НЕ вызывай rlm ещё раз!',
+    prompt: 'Create two files using rlm. Max 8 steps total!\nStep 1: Action: readFile[{"path": "notes.txt"}]\nStep 2: Action: rlm[{"prompt": "Summarize this text in 3-5 sentences: [content of notes.txt]"}]\nStep 3: Action: writeFile[{"path": "summary_draft.txt", "content": "[rlm answer]"}]\nStep 4: Action: rlm[{"prompt": "Improve this summary, make it more professional: [content of summary_draft.txt]"}]\nStep 5: Action: writeFile[{"path": "summary_final.txt", "content": "[rlm answer]"}]\nDone! STOP.',
     evaluate: async (ctx) => {
       const checks = [];
-      const rlmCalls = ctx.toolCalls.filter(c => c.tool === 'rlm');
+      const rlmCalls = ctx.toolCalls.filter(c => c.tool === 'query_language_model');
       const draft = ctx.writtenFiles.get('summary_draft.txt');
       const final = ctx.writtenFiles.get('summary_final.txt');
 
       checks.push({
-        name: 'rlm_called',
-        passed: rlmCalls.length >= 1,
+        name: 'rlm_called_twice',
+        passed: rlmCalls.length >= 2,
         weight: 2,
-        message: `rlm вызван ${rlmCalls.length} раз (нужно >= 1)`,
+        message: `rlm вызван ${rlmCalls.length} раз (нужно >= 2)`,
       });
       checks.push({
         name: 'draft_created',
@@ -143,7 +143,7 @@ export const rlmTasks: Task[] = [
     prompt: 'Выполни рефакторинг кода через rlm. Строго по шагам:\n1. Action: readFile[{"path": "code.js"}]\n2. Action: rlm[{"prompt": "Refactor this JavaScript code: rename all variables temp to result, add JSDoc comments to each function, and add // refactored comment at the top. Output only the refactored code. Code: [содержимое code.js]"}]\n3. Action: writeFile[{"path": "code_refactored.js", "content": "[ответ rlm]"}]\n4. Action: writeFile[{"path": "refactor_report.txt", "content": "1. Renamed temp variables to result\\n2. Added JSDoc comments to functions\\n3. Added // refactored header comment"}]\nВсё! Не больше 6 шагов.',
     evaluate: async (ctx) => {
       const checks = [];
-      const rlmCalls = ctx.toolCalls.filter(c => c.tool === 'rlm');
+      const rlmCalls = ctx.toolCalls.filter(c => c.tool === 'query_language_model');
       const refactored = ctx.writtenFiles.get('code_refactored.js');
       const report = ctx.writtenFiles.get('refactor_report.txt');
 
@@ -196,7 +196,7 @@ export const rlmTasks: Task[] = [
     difficulty: 'expert',
     title: 'RLM multi-step synthesis pipeline',
     description: 'Многошаговый pipeline: rlm исследует тему → агент структурирует → rlm пишет финальный отчёт.',
-    prompt: 'Проведи исследование через rlm и создай структурированный отчёт:\n1. Используй rlm для исследования: "List 5 key differences between Docker and Podman. For each difference, provide a one-sentence explanation."\n2. Запиши ответ в файл research_raw.txt\n3. Используй rlm для структурирования: "Convert this list into a structured markdown report with sections: Overview, Key Differences (as numbered list), Recommendation. Use the following data: [содержимое research_raw.txt]"\n4. Запиши финальный отчёт в файл docker_vs_podman_rlm.md\n5. Файл должен содержать заголовки ##, нумерованный список и раздел Recommendation',
+    prompt: 'Проведи исследование через rlm и создай структурированный отчёт:\n1. Используй rlm для исследования: "List 5 key differences between Docker and Podman. For each difference, provide a one-sentence explanation."\n2. Запиши ответ в файл research_raw.txt\n3. Используй rlm для структурирования: "Convert this list into a structured markdown report with sections: Overview, Key Differences (as numbered list), Recommendation. Use the following data: [содержимое research_raw.txt]"\n4. Запиши финальный отчёт в файл docker_vs_podman_rlm.md\n5. Файл должен содержать: ## Overview, ## Key Differences, ## Recommendation',
     evaluate: async (ctx) => {
       const checks = [];
       const rlmCalls = ctx.toolCalls.filter(c => c.tool === 'rlm');
@@ -204,10 +204,10 @@ export const rlmTasks: Task[] = [
       const final = ctx.writtenFiles.get('docker_vs_podman_rlm.md');
 
       checks.push({
-        name: 'rlm_called',
-        passed: rlmCalls.length >= 1,
+        name: 'rlm_called_twice',
+        passed: rlmCalls.length >= 2,
         weight: 2,
-        message: `rlm вызван ${rlmCalls.length} раз (нужно >= 1)`,
+        message: `rlm вызван ${rlmCalls.length} раз (нужно >= 2)`,
       });
       checks.push({
         name: 'raw_created',
@@ -246,16 +246,16 @@ export const rlmTasks: Task[] = [
     prompt: 'Реализуй модуль валидации email с тестами через rlm:\n1. Используй rlm для генерации тестов: "Write 5 test cases for an email validation function. For each test, provide: input email (string) and expected result (true/false). Cover: valid email, missing @, missing domain dot, empty string, spaces. Output as JSON array: [{input, expected}]"\n2. Запиши тесты в файл tests.json\n3. Используй rlm для генерации реализации: "Write a JavaScript function validateEmail(email) that returns true for valid emails and false otherwise. Valid email must contain @ and a dot after @. Output only the function code."\n4. Запиши реализацию в файл validator.js\n5. Запиши в файл test_summary.txt количество тест-кейсов и описание каждого',
     evaluate: async (ctx) => {
       const checks = [];
-      const rlmCalls = ctx.toolCalls.filter(c => c.tool === 'rlm');
+      const rlmCalls = ctx.toolCalls.filter(c => c.tool === 'query_language_model');
       const tests = ctx.writtenFiles.get('tests.json');
       const validator = ctx.writtenFiles.get('validator.js');
       const summary = ctx.writtenFiles.get('test_summary.txt');
 
       checks.push({
-        name: 'rlm_called',
-        passed: rlmCalls.length >= 1,
+        name: 'rlm_called_twice',
+        passed: rlmCalls.length >= 2,
         weight: 2,
-        message: `rlm вызван ${rlmCalls.length} раз (нужно >= 1)`,
+        message: `rlm вызван ${rlmCalls.length} раз (нужно >= 2)`,
       });
       checks.push({
         name: 'tests_created',

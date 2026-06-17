@@ -13,6 +13,7 @@ export { runReActLoop } from './src/reactor.js';
 export type { ReActCallbacks } from './src/reactor.js';
 export type { ToolCallRecord } from './types.js';
 export type { DdgResult } from './src/html.js';
-
-// Re-export loadEnv for direct usage if needed
 export { loadEnv } from './src/config.js';
+
+// RLM executor (replaces ReAct loop)
+export { runRLM } from './src/rlm.js';
