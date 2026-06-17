@@ -184,7 +184,7 @@ export async function startTUI(rl?: readline.Interface) {
         },
       });
     } else {
-      await runAutonomous(query, 10);
+      await runAutonomous(query);
     }
   }
   rl_.close();
