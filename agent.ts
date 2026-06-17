@@ -83,7 +83,7 @@ export function resetContextLength(): void {
 
 // ─── AUTONOMOUS MODE ───────────────────────────────────────
 
-export async function runAutonomous(goal: string, maxSteps = parseInt(process.env.MAX_STEPS || String(DEFAULT_MAX_STEPS), 10)) {
+export async function runAutonomous(goal: string, maxSteps = parseInt(process.env.MAX_STEP || process.env.MAX_STEPS || String(DEFAULT_MAX_STEPS), 10)) {
   console.clear();
   console.log(`${C.green}${C.bright}АВТОНОМНЫЙ АГЕНТ${C.reset}`);
   console.log(`${C.dim}Цель: ${goal}${C.reset}`);
