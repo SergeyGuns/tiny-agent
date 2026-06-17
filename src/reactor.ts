@@ -5,8 +5,9 @@ import type { Message, ToolCallRecord } from '../types.js';
 import { parseAction } from './parser.js';
 import { queryLLM } from './llm.js';
 import { LLM_PROFILES, LLMProfileName } from './llm.js';
-import { BENCH_SYSTEM_PROMPT } from './prompt.js';
+import { BENCH_SYSTEM_PROMPT, PLAN_SYSTEM_PROMPT } from './prompt.js';
 import { RESULT_TRUNCATE_LENGTH } from './config.js';
+import { tools } from './tools.js';
 
 // ─── ReAct loop callbacks ──────────────────────────────────────
 
@@ -14,6 +15,7 @@ export interface ReActCallbacks {
   onStep?: (step: number, response: string) => void;
   onToolCall?: (step: number, tool: string, args: Record<string, unknown>, result: string) => void;
   onComplete?: (steps: number) => void;
+  onContextUpdate?: (messages: Message[]) => void;
 }
 
 // ─── ReAct loop ────────────────────────────────────────────────
@@ -27,20 +29,29 @@ export async function runReActLoop(
     { role: 'system', content: BENCH_SYSTEM_PROMPT },
     { role: 'user', content: prompt },
   ];
+    callbacks?.onContextUpdate?.(history);
   const toolCalls: ToolCallRecord[] = [];
   const filesCreated: string[] = [];
   let lastReadStep = 0;
   let emptySteps = 0;
+  let signalCompleteAttempts = 0;
 
   for (let step = 1; step <= maxSteps; step++) {
+    callbacks?.onContextUpdate?.(history);
     const response = await queryLLM(history, LLM_PROFILES[profile]);
     history.push({ role: 'assistant', content: response });
     callbacks?.onStep?.(step, response);
 
     const action = parseAction(response);
 
-    // v12: Fast DONE detection
     if (action && action.name === 'signal_task_complete') {
+      signalCompleteAttempts++;
+      // Don't allow completion without real tool calls — model is skipping work
+      if (toolCalls.length === 0 && signalCompleteAttempts < 2) {
+        history.push({ role: 'user',
+          content: 'You called signal_task_complete without doing any work first. Call a tool to complete the task, or just reply directly if no tools are needed.' });
+        continue;
+      }
       callbacks?.onComplete?.(step);
       return { steps: step, toolCalls };
     }
@@ -52,6 +63,13 @@ export async function runReActLoop(
         callbacks?.onComplete?.(step);
         return { steps: step, toolCalls };
       }
+    }
+
+    // If model returned plain text without Action: and no tools were called,
+    // treat it as a direct answer (e.g. "Привет!" or simple factual response)
+    if (!action && toolCalls.length === 0 && response.trim().length > 0) {
+      callbacks?.onComplete?.(step);
+      return { steps: step, toolCalls };
     }
 
     if (!action) {
@@ -251,6 +269,7 @@ export async function runReActLoop(
     const readPaths = toolCalls.filter(c => c.tool === 'read_file_content').map(c => c.args?.path).filter(Boolean);
     history.push({ role: 'user',
       content: `WARNING: read ${totalReads} files (${readPaths.join(', ')}) but NO write! Use write_file_content NOW! Last step!` });
+    callbacks?.onContextUpdate?.(history);
     const finalResponse = await queryLLM(history, LLM_PROFILES[profile]);
     history.push({ role: 'assistant', content: finalResponse });
     const finalAction = parseAction(finalResponse);
@@ -267,6 +286,106 @@ export async function runReActLoop(
         } catch { /* failed */ }
       }
     }
+  }
+
+  callbacks?.onComplete?.(maxSteps);
+  return { steps: maxSteps, toolCalls };
+}
+
+// ─── Plan mode: read-only + search only ──────────────────────
+
+const PLAN_ALLOWED_TOOLS = ['search_web', 'fetch_url_content', 'list_directory', 'read_file_content', 'search_in_files', 'signal_task_complete'];
+
+export async function runPlanLoop(
+  prompt: string,
+  maxSteps: number = 10,
+  callbacks?: ReActCallbacks,
+): Promise<{ steps: number; toolCalls: ToolCallRecord[] }> {
+  const history: Message[] = [
+    { role: 'system', content: PLAN_SYSTEM_PROMPT },
+    { role: 'user', content: prompt },
+  ];
+  callbacks?.onContextUpdate?.(history);
+  const toolCalls: ToolCallRecord[] = [];
+  let emptySteps = 0;
+
+  for (let step = 1; step <= maxSteps; step++) {
+    callbacks?.onContextUpdate?.(history);
+    const response = await queryLLM(history, {
+      ...LLM_PROFILES.plan,
+      toolsFilter: PLAN_ALLOWED_TOOLS,
+    });
+    history.push({ role: 'assistant', content: response });
+    callbacks?.onStep?.(step, response);
+
+    const action = parseAction(response);
+
+    if (action && action.name === 'signal_task_complete') {
+      callbacks?.onComplete?.(step);
+      return { steps: step, toolCalls };
+    }
+
+    // Natural language completion detection
+    if (!action) {
+      const r = response.trim();
+      if (/^(ЗАДАЧА ВЫПОЛНЕНА|ГОТОВО|ВСЁ СДЕЛАНО|ЗАВЕРШЕНО|COMPLETE|DONE|FINISHED|THAT IS ALL|THAT'S ALL)/i.test(r)
+          || /задача (выполнена|сделана|завершена)|task (complete|done|finished)/i.test(r)) {
+        callbacks?.onComplete?.(step);
+        return { steps: step, toolCalls };
+      }
+      // Plain text response — treat as direct answer
+      if (toolCalls.length === 0 && r.length > 0) {
+        callbacks?.onComplete?.(step);
+        return { steps: step, toolCalls };
+      }
+    }
+
+    if (!action) {
+      emptySteps++;
+      if (emptySteps >= 3) {
+        history.push({ role: 'user',
+          content: `NO TOOL ${emptySteps} steps! Use Action: search_web[{"query":"..."}] or signal_task_complete[]` });
+        emptySteps = 0;
+        continue;
+      }
+      if (step === 1) {
+        history.push({ role: 'user',
+          content: `NO TOOL! Use: Action: search_web[{"query":"..."}] or read_file_content[{"path":"..."}]` });
+      } else {
+        history.push({ role: 'user',
+          content: `NO TOOL (step ${step})! Use a read/search tool or signal_task_complete[]` });
+      }
+      continue;
+    }
+    emptySteps = 0;
+
+    // Enforce allowed tools — block write/execute
+    if (!PLAN_ALLOWED_TOOLS.includes(action.name)) {
+      history.push({ role: 'user',
+        content: `FORBIDDEN in plan mode: "${action.name}". Allowed: ${PLAN_ALLOWED_TOOLS.join(', ')}` });
+      continue;
+    }
+
+    const toolFn = tools[action.name];
+    if (!toolFn) {
+      history.push({ role: 'user', content: `Tool "${action.name}" not found.` });
+      continue;
+    }
+
+    const start = Date.now();
+    let result: string;
+    try {
+      result = await toolFn(action.args);
+      if (typeof result !== 'string') result = String(result);
+    } catch (e: any) {
+      result = `Error: ${e.message?.substring(0, 200)}`;
+    }
+    const durationMs = Date.now() - start;
+
+    toolCalls.push({ step, tool: action.name, args: action.args, result, durationMs });
+    callbacks?.onToolCall?.(step, action.name, action.args, result);
+
+    history.push({ role: 'user', content: `Observation: ${result}` });
   }
 
   callbacks?.onComplete?.(maxSteps);

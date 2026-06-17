@@ -9,6 +9,7 @@ export interface LLMOptions {
   max_tokens?: number;
   tools?: object[];
   tool_choice?: string | object;
+  toolsFilter?: string[];
 }
 
 export const LLM_PROFILES = {
@@ -19,6 +20,7 @@ export const LLM_PROFILES = {
   planning:  { temperature: 0.4, enable_thinking: true,  max_tokens: 2000 },
   terminal:  { temperature: 0.3, enable_thinking: false, max_tokens: 600 },
   tool_use:  { temperature: 0.7, enable_thinking: false, max_tokens: 800 },
+  plan:      { temperature: 0.4, enable_thinking: true,  max_tokens: 2000 },
 } as const;
 
 export type LLMProfileName = keyof typeof LLM_PROFILES;
@@ -32,7 +34,14 @@ export async function queryLLM(messages: Message[], options?: LLMOptions, retrie
   const enable_thinking = options?.enable_thinking ?? false;
   const tools = options?.tools !== undefined
     ? { tools: options.tools }
-    : { tools: Object.values(toolSchemas).map(s => ({ type: 'function', function: s })) };
+    : {
+        tools: Object.values(toolSchemas)
+          .filter(s => {
+            if (!options?.toolsFilter) return true;
+            return options.toolsFilter.includes((s as any).name);
+          })
+          .map(s => ({ type: 'function', function: s }))
+      };
   const tool_choice = options?.tool_choice !== undefined
     ? { tool_choice: options.tool_choice }
     : { tool_choice: 'auto' };
@@ -92,7 +101,5 @@ export async function queryLLM(messages: Message[], options?: LLMOptions, retrie
 }
 
 export function sleep(ms: number): Promise<void> {
-  const { promise, resolve } = Promise.withResolvers<void>();
-  setTimeout(resolve, ms);
-  return promise;
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
