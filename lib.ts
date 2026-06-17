@@ -13,7 +13,7 @@ export { runReActLoop, runPlanLoop } from './src/reactor.js';
 export type { ReActCallbacks } from './src/reactor.js';
 export type { ToolCallRecord } from './types.js';
 export type { DdgResult } from './src/html.js';
-export { loadEnv, loadProviders, saveProviders, getActiveProvider, setActiveProvider } from './src/config.js';
+export { loadEnv, DEFAULT_MAX_STEPS, loadProviders, saveProviders, getActiveProvider, setActiveProvider } from './src/config.js';
 export type { Provider } from './src/config.js';
 export { providerAdd, providerList, providerUse, providerRemove, fetchModels } from './src/provider.js';
 

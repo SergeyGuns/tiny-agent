@@ -1,7 +1,7 @@
 import { execSync } from 'child_process';
 import * as readline from 'readline/promises';
 import { stdin as input, stdout as output } from 'process';
-import { loadEnv } from './lib.js';
+import { loadEnv, DEFAULT_MAX_STEPS } from './lib.js';
 import { runReActLoop, runPlanLoop } from './lib.js';
 import type { Message } from './types.js';
 import { providerAdd, providerList, providerUse, providerRemove } from './src/provider.js';
@@ -83,7 +83,7 @@ export function resetContextLength(): void {
 
 // ─── AUTONOMOUS MODE ───────────────────────────────────────
 
-export async function runAutonomous(goal: string, maxSteps = parseInt(process.env.MAX_STEPS || '10', 10)) {
+export async function runAutonomous(goal: string, maxSteps = parseInt(process.env.MAX_STEPS || String(DEFAULT_MAX_STEPS), 10)) {
   console.clear();
   console.log(`${C.green}${C.bright}АВТОНОМНЫЙ АГЕНТ${C.reset}`);
   console.log(`${C.dim}Цель: ${goal}${C.reset}`);
