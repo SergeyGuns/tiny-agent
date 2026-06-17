@@ -15,6 +15,7 @@ export type { ToolCallRecord } from './types.js';
 export type { DdgResult } from './src/html.js';
 export { loadEnv, loadProviders, saveProviders, getActiveProvider, setActiveProvider } from './src/config.js';
 export type { Provider } from './src/config.js';
+export { providerAdd, providerList, providerUse, providerRemove, fetchModels } from './src/provider.js';
 
 // RLM executor (replaces ReAct loop)
 export { runRLM } from './src/rlm.js';
