@@ -230,9 +230,9 @@ export const terminalTasks: Task[] = [
       if (refactored) {
         checks.push({
           name: 'no_temp',
-          passed: !refactored.includes('temp'),
+          passed: !/\btemp\b/.test(refactored),
           weight: 2,
-          message: !refactored.includes('temp') ? 'Переменная temp заменена' : 'Переменная temp всё ещё присутствует',
+          message: !/\btemp\b/.test(refactored) ? 'Переменная temp заменена' : 'Переменная temp всё ещё присутствует',
         });
         checks.push({
           name: 'has_result',

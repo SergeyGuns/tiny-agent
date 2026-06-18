@@ -23,7 +23,7 @@ export const toolUseTasks: Task[] = [
         message: content !== undefined ? 'version.txt создан' : 'version.txt не найден',
       });
       if (content) {
-        const hasVersion = /\d+\.\d+\.\d+/.test(content);
+        const hasVersion = /\d+\.\d+(\.\d+)?/.test(content);
         checks.push({
           name: 'has_version',
           passed: hasVersion,

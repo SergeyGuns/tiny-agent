@@ -488,8 +488,8 @@ export async function runAgentLoop(
     if (actions.length === 0) {
       emptySteps++;
 
-      // Try classifier on 2nd+ empty step (give model one chance to self-correct)
-      if (emptySteps >= 2 && response.trim().length > 20) {
+      // Try classifier on 1st+ empty step (give model one chance to self-correct)
+      if (emptySteps >= 1 && response.trim().length > 20) {
         const classified = await classifyActions(prompt, response, step);
         if (classified.actions.length > 0) {
           // Use classifier's suggested actions as nudged actions
