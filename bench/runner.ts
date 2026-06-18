@@ -268,9 +268,9 @@ async function runBenchmark(opts: RunOptions = {}): Promise<BenchmarkReport> {
     const result = await executeTask(task, maxSteps);
     results.push(result);
 
-    // Cooldown между задачами чтобы LM Studio не перегружался (v9: уменьшен до 1s)
+    // Cooldown между задачами чтобы LM Studio не перегружался
     if (i < tasks.length - 1) {
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 5000));
     }
 
     if (verbose) {
