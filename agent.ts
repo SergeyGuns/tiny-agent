@@ -2,7 +2,7 @@ import { execSync } from 'child_process';
 import * as readline from 'readline/promises';
 import { stdin as input, stdout as output } from 'process';
 import { loadEnv, DEFAULT_MAX_STEPS } from './lib.js';
-import { runReActLoop, runPlanLoop } from './lib.js';
+import { runAgentLoop, runPlanLoop } from './lib.js';
 import type { Message } from './types.js';
 import { providerAdd, providerList, providerUse, providerRemove } from './src/provider.js';
 
@@ -90,7 +90,7 @@ export async function runAutonomous(goal: string, maxSteps = parseInt(process.en
   displayStatus();
   console.log(`${C.dim}Макс. шагов: ${maxSteps}${C.reset}\n`);
 
-  await runReActLoop(goal, maxSteps, {
+  await runAgentLoop(goal, maxSteps, {
     onStep: (step, response) => {
       if (/^(Plan|Thought):/m.test(response)) {
         currentMode = 'plane';

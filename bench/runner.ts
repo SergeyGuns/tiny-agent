@@ -6,7 +6,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { runReActLoop, queryLLM, loadEnv } from '../lib.js';
+import { runAgentLoop, queryLLM, loadEnv } from '../lib.js';
 import { allTasks } from './tasks/index.js';
 import type { ToolCallRecord } from '../types.js';
 import type {
@@ -134,8 +134,9 @@ function collectWrittenFiles(workDir: string): Map<string, string> {
 
 // ─── Выполнение одной задачи ──────────────────────────────────
 
-async function executeTask(task: Task, maxSteps = 15): Promise<TaskResult> {
-  const adaptiveSteps = task.difficulty === 'expert' ? 25 : task.difficulty === 'hard' ? 20 : maxSteps;
+async function executeTask(task: Task, maxSteps = 12): Promise<TaskResult> {
+  // RLM: fewer steps needed since multiple tool calls per step
+  const adaptiveSteps = task.difficulty === 'expert' ? 20 : task.difficulty === 'hard' ? 16 : maxSteps;
   const workDir = mkdtempSync(path.join(tmpdir(), `bench-${task.id}-`));
   const toolRecords: ToolCallRecord[] = [];
   const startTime = Date.now();
@@ -151,7 +152,7 @@ async function executeTask(task: Task, maxSteps = 15): Promise<TaskResult> {
     const timeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error(`Таймаут задачи (${taskTimeout / 1000}s)`)), taskTimeout)
     );
-    const runPromise = runReActLoop(task.prompt, adaptiveSteps, {
+    const runPromise = runAgentLoop(task.prompt, adaptiveSteps, {
       onStep: (step, response) => {
         const preview = response.substring(0, 120).replace(/\n/g, ' ');
         console.log(`    ${C.dim}step ${step}: ${preview}...${C.reset}`);

@@ -275,7 +275,7 @@ export const toolUseTasks: Task[] = [
         const hasReact = report.toLowerCase().includes('react');
         const hasVue = report.toLowerCase().includes('vue');
         const hasMarkdown = report.includes('#') || report.includes('**');
-        const searchCount = ctx.toolCalls.filter(c => c.tool === 'webSearch').length;
+        const searchCount = ctx.toolCalls.filter(c => c.tool === 'search_web').length;
 
         checks.push({
           name: 'has_react',

@@ -89,7 +89,7 @@ export const researchTasks: Task[] = [
         const hasDifferences = content.includes('различия') || content.includes('differences') || content.includes('Различия');
         const hasAdvantages = content.includes('преимущест') || content.includes('advantages') || content.includes('Преимущества');
         const hasConclusion = content.includes('вывод') || content.includes('conclusion') || content.includes('Вывод') || content.includes('Заключение');
-        const searchCount = ctx.toolCalls.filter(c => c.tool === 'webSearch').length;
+        const searchCount = ctx.toolCalls.filter(c => c.tool === 'search_web').length;
 
         checks.push({
           name: 'has_differences',
@@ -183,7 +183,7 @@ export const researchTasks: Task[] = [
           weight: 3,
           message: `Разделов найдено: ${foundSections.length}/${sections.length}`,
         });
-        const searchCount = ctx.toolCalls.filter(c => c.tool === 'webSearch').length;
+        const searchCount = ctx.toolCalls.filter(c => c.tool === 'search_web').length;
         checks.push({
           name: 'multiple_searches',
           passed: searchCount >= 2,
@@ -215,7 +215,7 @@ export const researchTasks: Task[] = [
         const hasReact = content.toLowerCase().includes('react');
         const hasTS = content.toLowerCase().includes('typescript');
         const hasTable = content.includes('|');
-        const searchCount = ctx.toolCalls.filter(c => c.tool === 'webSearch').length;
+        const searchCount = ctx.toolCalls.filter(c => c.tool === 'search_web').length;
 
         checks.push({
           name: 'has_express',
@@ -275,7 +275,7 @@ export const researchTasks: Task[] = [
         const hasRedis = content.toLowerCase().includes('redis');
         const hasComparison = content.includes('|') || content.includes('сравнени');
         const hasRecommendation = content.includes('рекомендац') || content.includes('recommend');
-        const searchCount = ctx.toolCalls.filter(c => c.tool === 'webSearch').length;
+        const searchCount = ctx.toolCalls.filter(c => c.tool === 'search_web').length;
 
         checks.push({
           name: 'has_postgres',

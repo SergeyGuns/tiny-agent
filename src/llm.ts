@@ -13,14 +13,15 @@ export interface LLMOptions {
 }
 
 export const LLM_PROFILES = {
-  toolCall:  { temperature: 0.7, enable_thinking: false, max_tokens: 800 },
-  rlm:       { temperature: 0.7, enable_thinking: false, max_tokens: 1000 },
+  toolCall:  { temperature: 0.7, enable_thinking: false, max_tokens: 1500 },
+  rlm:       { temperature: 0.7, enable_thinking: false, max_tokens: 1500 },
   subAgent:  { temperature: 0.5, enable_thinking: true,  max_tokens: 2000 },
   research:  { temperature: 0.6, enable_thinking: true,  max_tokens: 1500 },
   planning:  { temperature: 0.4, enable_thinking: true,  max_tokens: 2000 },
-  terminal:  { temperature: 0.3, enable_thinking: false, max_tokens: 600 },
-  tool_use:  { temperature: 0.7, enable_thinking: false, max_tokens: 800 },
+  terminal:  { temperature: 0.3, enable_thinking: false, max_tokens: 1000 },
+  tool_use:  { temperature: 0.7, enable_thinking: false, max_tokens: 1500 },
   plan:      { temperature: 0.4, enable_thinking: true,  max_tokens: 2000 },
+  classifier: { temperature: 0.3, enable_thinking: false, max_tokens: 500 },
 } as const;
 
 export type LLMProfileName = keyof typeof LLM_PROFILES;
@@ -102,4 +103,197 @@ export async function queryLLM(messages: Message[], options?: LLMOptions, retrie
 
 export function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// ─── Action Classifier ─────────────────────────────────────────
+// When the model returns a "thinking" response without Actions,
+// this classifier analyzes the intent and suggests tool calls.
+
+const CLASSIFIER_SYSTEM_PROMPT = `You are an action classifier. Given a task and a model's reasoning response (which lacks tool calls), determine what tool calls should be made next.
+
+Available tools:
+- search_web[{"query": "..."}] — search the internet
+- fetch_url_content[{"url": "..."}] — fetch a specific URL
+- list_directory[{"path": "..."}] — list files in a directory (default ".")
+- read_file_content[{"path": "..."}] — read a file
+- write_file_content[{"path": "...", "content": "..."}] — write a file
+- search_in_files[{"pattern": "...", "files": "..."}] — search text in files
+- execute_shell_command[{"command": "..."}] — run a shell command
+- signal_task_complete[] — signal task completion
+
+Analyze the reasoning text and output the EXACT tool calls that should be made next, one per line.
+Output ONLY Action: lines, nothing else.
+
+Example 1:
+Task: "Read data.json and write output.txt"
+Reasoning: "I need to read the data.json file first to understand its structure"
+Output:
+Action: read_file_content[{"path": "data.json"}]
+
+Example 2:
+Task: "Find all .txt files and search for 'important'"
+Reasoning: "I need to find all .txt files in the current directory first"
+Output:
+Action: list_directory[{"path": "."}]
+
+Example 3:
+Task: "Search for latest TypeScript version"
+Reasoning: "I should search the web for the latest TypeScript version"
+Output:
+Action: search_web[{"query": "latest TypeScript version"}]`;
+
+export interface ClassifierResult {
+  actions: { name: string; args: Record<string, unknown> }[];
+  raw: string;
+}
+
+export async function classifyActions(
+  task: string,
+  reasoning: string,
+  step: number,
+): Promise<ClassifierResult> {
+  const messages: Message[] = [
+    { role: 'system', content: CLASSIFIER_SYSTEM_PROMPT },
+    {
+      role: 'user',
+      content: `Task: "${task}"\n\nModel's reasoning (step ${step}):\n"${reasoning.substring(0, 500)}"\n\nOutput the Action: lines:`,
+    },
+  ];
+
+  try {
+    const response = await queryLLM(messages, LLM_PROFILES.classifier, 2);
+    const { parseAllActions } = await import('./parser.js');
+    const actions = parseAllActions(response);
+    return { actions, raw: response };
+  } catch {
+    return { actions: [], raw: '' };
+  }
+}
+
+// ─── Task Type Classifier ──────────────────────────────────────
+// Classifies the task to determine what kind of work it involves.
+
+const TASK_TYPE_PROMPT = `You are a task classifier. Given a task description, classify it into one or more of these categories:
+- "research" — requires web search, finding information online
+- "file_read" — requires reading existing files
+- "file_write" — requires creating/writing files
+- "file_transform" — requires reading, processing, and writing files
+- "refactor" — requires renaming/replacing content in files
+- "multi_section" — requires creating a document with multiple sections/charts
+- "validation" — requires checking/validating data
+- "shell" — requires running shell commands
+
+Output ONLY a JSON array of matching categories, e.g. ["research", "file_write"]`;
+
+export interface TaskTypeResult {
+  isResearch: boolean;
+  isFileRead: boolean;
+  isFileWrite: boolean;
+  isFileTransform: boolean;
+  isRefactor: boolean;
+  isMultiSection: boolean;
+  isValidation: boolean;
+  isShell: boolean;
+}
+
+export async function classifyTaskType(prompt: string): Promise<TaskTypeResult> {
+  const defaultResult: TaskTypeResult = {
+    isResearch: false, isFileRead: false, isFileWrite: false,
+    isFileTransform: false, isRefactor: false, isMultiSection: false,
+    isValidation: false, isShell: false,
+  };
+  try {
+    const messages: Message[] = [
+      { role: 'system', content: TASK_TYPE_PROMPT },
+      { role: 'user', content: `Task: "${prompt.substring(0, 300)}"\n\nCategories:` },
+    ];
+    const response = await queryLLM(messages, LLM_PROFILES.classifier, 2);
+    const match = response.match(/\[([^\]]+)\]/);
+    if (match) {
+      const cats = match[1].toLowerCase();
+      return {
+        isResearch: cats.includes('research'),
+        isFileRead: cats.includes('file_read'),
+        isFileWrite: cats.includes('file_write'),
+        isFileTransform: cats.includes('file_transform'),
+        isRefactor: cats.includes('refactor'),
+        isMultiSection: cats.includes('multi_section'),
+        isValidation: cats.includes('validation'),
+        isShell: cats.includes('shell'),
+      };
+    }
+  } catch { /* fall through */ }
+  return defaultResult;
+}
+
+// ─── Search Loop Classifier ────────────────────────────────────
+// Determines if the agent is stuck in a search loop.
+
+const SEARCH_LOOP_PROMPT = `You are a search loop detector. Given the task and recent tool call history, determine if the agent is stuck in a search loop (searching/fetching without writing).
+
+Respond with ONLY "LOOP" or "OK".`;
+
+export async function classifySearchLoop(
+  prompt: string,
+  toolCalls: { tool: string; result: string }[],
+  filesCreated: string[],
+): Promise<boolean> {
+  if (filesCreated.length > 0) return false;
+  const searchCalls = toolCalls.filter(c => c.tool === 'search_web' || c.tool === 'fetch_url_content');
+  if (searchCalls.length < 2) return false;
+
+  try {
+    const recentSearches = searchCalls.slice(-3).map((c, i) =>
+      `[${i + 1}] ${c.tool}: ${c.result.substring(0, 100)}`
+    ).join('\n');
+    const messages: Message[] = [
+      { role: 'system', content: SEARCH_LOOP_PROMPT },
+      { role: 'user', content: `Task: "${prompt.substring(0, 200)}"\n\nRecent searches:\n${recentSearches}\n\nFiles created: ${filesCreated.length}\n\nLOOP or OK?` },
+    ];
+    const response = await queryLLM(messages, LLM_PROFILES.classifier, 2);
+    return /LOOP/i.test(response);
+  } catch {
+    return false;
+  }
+}
+
+// ─── Refactor Check Classifier ─────────────────────────────────
+// Determines if a file write task involves refactoring (rename/replace).
+
+const REFACTOR_PROMPT = `You are a refactoring detector. Given a task and a file path, determine if the task involves refactoring (renaming variables, replacing content).
+
+Respond with ONLY "REFACTOR" or "NORMAL".`;
+
+export async function classifyRefactor(prompt: string, filePath: string): Promise<boolean> {
+  try {
+    const messages: Message[] = [
+      { role: 'system', content: REFACTOR_PROMPT },
+      { role: 'user', content: `Task: "${prompt.substring(0, 200)}"\nFile: ${filePath}\n\nREFACTOR or NORMAL?` },
+    ];
+    const response = await queryLLM(messages, LLM_PROFILES.classifier, 2);
+    return /REFACTOR/i.test(response);
+  } catch {
+    return false;
+  }
+}
+
+// ─── Multi-Section Check Classifier ────────────────────────────
+// Determines if a markdown file should have multiple sections.
+
+const MULTI_SECTION_PROMPT = `You are a document structure classifier. Given a task and a file path, determine if the output file should have multiple sections (## headings).
+
+Respond with ONLY "MULTI" or "SINGLE".`;
+
+export async function classifyNeedsSections(prompt: string, filePath: string): Promise<boolean> {
+  if (!filePath.endsWith('.md')) return false;
+  try {
+    const messages: Message[] = [
+      { role: 'system', content: MULTI_SECTION_PROMPT },
+      { role: 'user', content: `Task: "${prompt.substring(0, 200)}"\nFile: ${filePath}\n\nMULTI or SINGLE?` },
+    ];
+    const response = await queryLLM(messages, LLM_PROFILES.classifier, 2);
+    return /MULTI/i.test(response);
+  } catch {
+    return false;
+  }
 }

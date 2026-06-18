@@ -7,8 +7,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { Message, ToolCallRecord } from '../types.js';
-import { tools } from './tools.js';
-import { parseAction } from './parser.js';
+import { tools, Tool } from './tools.js';
+import { parseAllActions, parseWriteFileArgs } from './parser.js';
 import { queryLLM } from './llm.js';
 import { LLM_PROFILES, LLMProfileName } from './llm.js';
 import { BENCH_SYSTEM_PROMPT } from './prompt.js';
@@ -20,78 +20,13 @@ export interface RLMCallbacks {
   onComplete?: (steps: number) => void;
 }
 
-// ─── Parse multiple actions from a single response ────────
-function parseAllActions(text: string): { name: string; args: Record<string, unknown> }[] {
-  const actions: { name: string; args: Record<string, unknown> }[] = [];
-
-  // Try to find all Action: toolName[...] patterns
-  const actionRegex = /Action:\s*(\w+)\[([\s\S]*?)\](?=\s*Action:|$)/g;
-  let match;
-  while ((match = actionRegex.exec(text)) !== null) {
-    try {
-      const argsStr = match[2].trim();
-      const args = argsStr ? JSON.parse(argsStr) : {};
-      actions.push({ name: match[1].trim(), args });
-    } catch {
-      // Try lenient recovery for write_file_content with unescaped content
-      if (match[1].trim() === 'write_file_content') {
-        const recovered = parseWriteFileArgs(match[2].trim());
-        if (recovered) actions.push({ name: 'write_file_content', args: recovered });
-      }
-    }
-  }
-
-  // If no Action: prefix found, try single action without prefix
-  if (actions.length === 0) {
-    const single = parseAction(text);
-    if (single) actions.push(single);
-  }
-
-  return actions;
-}
-
-// ─── Lenient writeFile args parser (reused from parser.ts) ───
-function parseWriteFileArgs(raw: string): Record<string, unknown> | null {
-  const pathKeys = ['"path"', '"file"', '"filename"'];
-  let filePath: string | null = null;
-  for (const key of pathKeys) {
-    const m = raw.match(new RegExp(key + '\\s*:\\s*"([^"]+)"'));
-    if (m) { filePath = m[1]; }
-  }
-  if (!filePath) return null;
-
-  const contentKeyIdx = raw.indexOf('"content"');
-  if (contentKeyIdx === -1) return null;
-
-  const afterKey = raw.slice(contentKeyIdx + '"content"'.length);
-  const colonIdx = afterKey.indexOf(':');
-  if (colonIdx === -1) return null;
-  const afterColon = afterKey.slice(colonIdx + 1).trim();
-  if (!afterColon.startsWith('"')) return null;
-
-  const openingQuotePos = raw.indexOf('"', contentKeyIdx + '"content"'.length + colonIdx + 1);
-  if (openingQuotePos === -1) return null;
-
-  const lastBracket = raw.lastIndexOf(']');
-  const searchEnd = lastBracket > 0 ? lastBracket : raw.length;
-  let endQuotePos = -1;
-  for (let i = searchEnd - 1; i > openingQuotePos; i--) {
-    if (raw[i] === '"') { endQuotePos = i; break; }
-  }
-  if (endQuotePos === -1) return null;
-
-  let content = raw.slice(openingQuotePos + 1, endQuotePos);
-  content = content.replace(/\\"/g, '"').replace(/\\n/g, '\n');
-  return { path: filePath, content };
-}
-
 // ─── Execute a single tool call ─────────────────────────────
 async function executeTool(
   toolName: string,
   args: Record<string, unknown>,
 ): Promise<string> {
   // Reject absolute paths for write_file_content
-  if (toolName === 'write_file_content') {
+  if (toolName === Tool.WriteFile) {
     const rawPath = (args.path ?? args.file ?? args.filename) as string;
     if (rawPath && (rawPath.startsWith('/') || rawPath.startsWith('C:\\'))) {
       return `write_file_content: absolute path "${rawPath}" rejected. Use relative path.`;
@@ -125,7 +60,17 @@ export async function runRLM(
   const filesCreated: string[] = [];
 
   for (let step = 1; step <= maxSteps; step++) {
-    const response = await queryLLM(history, LLM_PROFILES[profile]);
+    let response: string;
+    try {
+      response = await queryLLM(history, LLM_PROFILES[profile]);
+    } catch (e) {
+      if (step < maxSteps) {
+        history.push({ role: 'user', content: 'LLM returned empty response. Try again.' });
+        continue;
+      }
+      callbacks?.onComplete?.(step);
+      return { steps: step, toolCalls: allToolCalls };
+    }
     history.push({ role: 'assistant', content: response });
 
     // Parse ALL actions from the response
@@ -146,7 +91,11 @@ export async function runRLM(
 
     for (const action of actions) {
       // Check for signal_task_complete
-      if (action.name === 'signal_task_complete') {
+      if (action.name === Tool.SignalComplete) {
+        if (allToolCalls.length === 0) {
+          stepResults.push({ tool: action.name, args: action.args, result: 'Cannot signal complete without doing work.' });
+          continue;
+        }
         shouldStop = true;
         break;
       }
@@ -155,7 +104,7 @@ export async function runRLM(
       stepResults.push({ tool: action.name, args: action.args, result });
 
       // Track created files
-      if (action.name === 'write_file_content' && !result.startsWith('Error')) {
+      if (action.name === Tool.WriteFile && !result.startsWith('Error') && !result.startsWith('Ошибка')) {
         const filePath = (action.args as Record<string, unknown>)?.path as string;
         if (filePath && !filePath.startsWith('/')) {
           filesCreated.push(filePath);
@@ -207,7 +156,7 @@ export async function runRLM(
     }
 
     // Nudge: if fetch_url_content called but no write_file_content, force it
-    if (stepResults.some(r => r.tool === 'fetch_url_content') && !stepResults.some(r => r.tool === 'write_file_content')) {
+    if (stepResults.some(r => r.tool === 'fetch_url_content') && !stepResults.some(r => r.tool === Tool.WriteFile)) {
       history.push({
         role: 'user',
         content: 'CRITICAL: You called fetch_url_content() but no write_file_content! You MUST write the content to a file after fetch_url_content().',
@@ -215,7 +164,7 @@ export async function runRLM(
     }
 
     // Nudge: if validation done but no report, force report file
-    if (stepResults.some(r => r.tool === 'write_file_content' && r.result.includes('JSON')) && !stepResults.some(r => r.result.includes('report.txt'))) {
+    if (stepResults.some(r => r.tool === Tool.WriteFile && r.result.includes('JSON')) && !stepResults.some(r => r.result.includes('report.txt'))) {
       history.push({
         role: 'user',
         content: 'CRITICAL: You validated/processed JSON but no report file! Create report.txt with summary and signal_task_complete[].',

@@ -3,7 +3,7 @@ import * as assert from 'node:assert';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { parseAction, extractTextFromHtml, tools, parseDdgHtml } from '../lib.js';
+import { parseAction, parseAllActions, extractTextFromHtml, tools, parseDdgHtml } from '../lib.js';
 
 // ─── parseAction ─────────────────────────────────────────────
 
@@ -61,6 +61,81 @@ describe('parseAction', () => {
       name: 'write_file_content',
       args: { path: 'answer.txt', content: 'Hello world' }
     });
+  });
+});
+
+// ─── parseAllActions ───────────────────────────────────────────
+
+describe('parseAllActions', () => {
+  it('parses single action', () => {
+    const result = parseAllActions('Action: read_file_content[{\"path\": \"index.ts\"}]');
+    assert.strictEqual(result.length, 1);
+    assert.deepStrictEqual(result[0], { name: 'read_file_content', args: { path: 'index.ts' } });
+  });
+
+  it('parses two actions', () => {
+    const text = 'Action: read_file_content[{\"path\": \"a.txt\"}]\nAction: write_file_content[{\"path\": \"b.txt\", \"content\": \"hello\"}]';
+    const result = parseAllActions(text);
+    assert.strictEqual(result.length, 2);
+    assert.strictEqual(result[0].name, 'read_file_content');
+    assert.strictEqual(result[0].args.path, 'a.txt');
+    assert.strictEqual(result[1].name, 'write_file_content');
+    assert.strictEqual(result[1].args.path, 'b.txt');
+    assert.strictEqual(result[1].args.content, 'hello');
+  });
+
+  it('parses three actions', () => {
+    const text = 'Action: list_directory[{\"path\": \".\"}]\nAction: read_file_content[{\"path\": \"data.json\"}]\nAction: write_file_content[{\"path\": \"out.txt\", \"content\": \"done\"}]';
+    const result = parseAllActions(text);
+    assert.strictEqual(result.length, 3);
+    assert.strictEqual(result[0].name, 'list_directory');
+    assert.strictEqual(result[1].name, 'read_file_content');
+    assert.strictEqual(result[2].name, 'write_file_content');
+  });
+
+  it('returns empty array for plain text', () => {
+    const result = parseAllActions('Just a regular response with no action.');
+    assert.strictEqual(result.length, 0);
+  });
+
+  it('returns empty array for empty string', () => {
+    const result = parseAllActions('');
+    assert.strictEqual(result.length, 0);
+  });
+
+  it('handles actions on same line', () => {
+    const text = 'Action: read_file_content[{\"path\": \"a.txt\"}] Action: write_file_content[{\"path\": \"b.txt\", \"content\": \"x\"}]';
+    const result = parseAllActions(text);
+    assert.strictEqual(result.length, 2);
+  });
+
+  it('handles **Action:** bold prefix', () => {
+    const text = '**Action:** read_file_content[{\"path\": \"a.txt\"}]';
+    const result = parseAllActions(text);
+    assert.strictEqual(result.length, 1);
+    assert.strictEqual(result[0].name, 'read_file_content');
+  });
+
+  it('strips thinking tags before parsing', () => {
+    const text = '<think>Let me think...</think>\nAction: read_file_content[{\"path\": \"a.txt\"}]';
+    const result = parseAllActions(text);
+    assert.strictEqual(result.length, 1);
+    assert.strictEqual(result[0].name, 'read_file_content');
+  });
+
+  it('handles empty args: signal_task_complete[]', () => {
+    const text = 'Action: signal_task_complete[]';
+    const result = parseAllActions(text);
+    assert.strictEqual(result.length, 1);
+    assert.strictEqual(result[0].name, 'signal_task_complete');
+    assert.deepStrictEqual(result[0].args, {});
+  });
+
+  it('handles mixed valid and invalid JSON args', () => {
+    const text = 'Action: read_file_content[{\"path\": \"a.txt\"}]\nAction: broken[{invalid}]';
+    const result = parseAllActions(text);
+    assert.strictEqual(result.length, 1);
+    assert.strictEqual(result[0].name, 'read_file_content');
   });
 });
 

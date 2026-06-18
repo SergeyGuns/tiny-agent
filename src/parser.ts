@@ -81,6 +81,44 @@ export function parseAction(text: string): { name: string; args: Record<string, 
   return null;
 }
 
+// ─── Multi-action parser ──────────────────────────────────────
+
+/**
+ * Parses ALL actions from a single LLM response.
+ * Supports multiple Action: toolName[...] patterns in one text.
+ * Also handles **Action:** (markdown bold) and bare toolName[...] (no prefix).
+ * Strips thinking tags before parsing.
+ */
+export function parseAllActions(text: string): { name: string; args: Record<string, unknown> }[] {
+  const actions: { name: string; args: Record<string, unknown> }[] = [];
+  text = stripThinkingTags(text);
+
+  // Try to find all Action: toolName[...] patterns (non-greedy match)
+  const actionRegex = /(?:\*\*Action:\*\*|Action:)\s*(\w+)\[([\s\S]*?)\](?=\s*(?:\*\*Action:\*\*|Action:|$))/g;
+  let match;
+  while ((match = actionRegex.exec(text)) !== null) {
+    try {
+      const argsStr = match[2].trim();
+      const args = argsStr ? JSON.parse(argsStr) : {};
+      actions.push({ name: match[1].trim(), args });
+    } catch {
+      // Try lenient recovery for write_file_content with unescaped content
+      if (match[1].trim() === 'write_file_content') {
+        const recovered = parseWriteFileArgs(match[2].trim());
+        if (recovered) actions.push({ name: 'write_file_content', args: recovered });
+      }
+    }
+  }
+
+  // If no Action: prefix found, try single action without prefix
+  if (actions.length === 0) {
+    const single = parseAction(text);
+    if (single) actions.push(single);
+  }
+
+  return actions;
+}
+
 // ─── Lenient writeFile args parser ─────────────────────────────
 
 /**
