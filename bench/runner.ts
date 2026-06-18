@@ -86,6 +86,21 @@ async function injectFixtures(taskId: string, workDir: string): Promise<void> {
         { name: 'Eve', email: 'eve@nodot' },
       ]),
     },
+    'RES-002': {
+      'data.json': JSON.stringify({
+        slideshow: {
+          title: 'Sample Slideshow',
+          author: 'Test Author',
+          date: '2024-01-15',
+          slides: [
+            { title: 'Introduction', content: 'Welcome to the presentation' },
+            { title: 'Overview', content: 'This slideshow covers key topics' },
+            { title: 'Conclusion', content: 'Thank you for attending' },
+          ],
+        },
+        metadata: { version: '1.0', format: 'json' },
+      }, null, 2),
+    },
     'RLM-004': {
       'notes.txt': 'This is an important note about the project.\nThis line is not important.\nAnother important finding here.\nWe discovered a critical bug in the system.\nThe team worked hard to fix it.',
     },

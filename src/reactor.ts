@@ -666,16 +666,12 @@ export async function runAgentLoop(
 
     // ─── Nudges (adapted for multi-action) ───────────────────
 
-    // Search loop: detected by LLM classifier
-    if (filesCreated.length === 0 && toolCalls.filter(c => c.tool === Tool.SearchWeb || c.tool === Tool.FetchUrl).length >= 2) {
-      const hasWriteInStep = stepResults.some(r => r.tool === Tool.WriteFile);
-      if (!hasWriteInStep) {
-        const isLoop = await classifySearchLoop(prompt, toolCalls, filesCreated);
-        if (isLoop) {
-          history.push({ role: 'user',
-            content: `CRITICAL: You are stuck in a search loop! You MUST write_file_content() to save results! Do NOT search more!` });
-        }
-      }
+    // Search loop: hard limit — max 3 search/fetch calls without write
+    const searchFetchCount = toolCalls.filter(c => c.tool === Tool.SearchWeb || c.tool === Tool.FetchUrl).length;
+    const hasWriteInStep = stepResults.some(r => r.tool === Tool.WriteFile);
+    if (searchFetchCount >= 3 && filesCreated.length === 0 && !hasWriteInStep) {
+      history.push({ role: 'user',
+        content: `STOP! You have made ${searchFetchCount} search/fetch calls without writing! You MUST call write_file_content() NOW! Do NOT search anymore! Use the data you already have!` });
     }
 
     // Fetch without write in same step
