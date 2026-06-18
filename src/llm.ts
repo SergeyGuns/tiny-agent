@@ -78,7 +78,7 @@ export async function queryLLM(messages: Message[], options?: LLMOptions, retrie
       const data = await response.json() as Record<string, unknown>;
       const choices = data.choices as Record<string, unknown>[] | undefined;
       const msg = choices?.[0]?.message as Record<string, unknown> | undefined;
-      const rawContent = (msg?.content as string | undefined) || (msg?.reasoning_content as string | undefined) || '';
+      const rawContent = (msg?.content as string | undefined) || '';
       const content = stripThinkingTags(rawContent);
 
       if (!content || content.length === 0) {
