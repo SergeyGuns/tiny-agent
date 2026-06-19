@@ -10,7 +10,6 @@ import type { Message, ToolCallRecord } from '../types.js';
 import { tools, Tool } from './tools.js';
 import { parseAllActions, parseWriteFileArgs } from './parser.js';
 import { queryLLM, classifyIsReady, classifySearchLoop } from './llm.js';
-import { validateToolResult } from './with-subagent.js';
 import { LLM_PROFILES, LLMProfileName } from './llm.js';
 import { BENCH_SYSTEM_PROMPT } from './prompt.js';
 import { RESULT_TRUNCATE_LENGTH } from './config.js';
@@ -86,32 +85,13 @@ export async function runRLM(
     // Parse ALL actions from the response
     const actions = parseAllActions(response);
 
-    // ── No actions parsed → check if LLM is ready to answer ──
+    // ── No actions parsed → nudge to call a tool ──
     if (actions.length === 0) {
-      // Case 1: No tools called yet → direct answer (e.g. "Привет!")
-      if (allToolCalls.length === 0 && response.trim().length > 0) {
-        callbacks?.onStep?.(step, response, []);
-        callbacks?.onComplete?.(step);
-        return { steps: step, toolCalls: allToolCalls };
-      }
-
-      // Case 2: Tools were called → use classifier to decide
-      if (allToolCalls.length > 0 && response.trim().length >= 20) {
-        const readiness = await classifyIsReady(prompt, response, allToolCalls);
-        if (readiness.isReady) {
-          callbacks?.onStep?.(step, response, []);
-          callbacks?.onComplete?.(step);
-          return { steps: step, toolCalls: allToolCalls };
-        }
-        // Classifier says MORE_WORK — fall through to nudge below
-      }
-
-      // Case 3: Short/empty response → nudge
       emptySteps++;
       if (emptySteps >= 3) {
         history.push({
           role: 'user',
-          content: `NO TOOL ${emptySteps} steps! Use Action: toolName[{"key":"value"}] or signal_task_complete[]`,
+          content: 'NO TOOL ' + emptySteps + ' steps! Use Action: toolName[{"key":"value"}] or signal_task_complete[]',
         });
         emptySteps = 0;
         continue;
@@ -119,12 +99,12 @@ export async function runRLM(
       if (step === 1) {
         history.push({
           role: 'user',
-          content: `NO TOOL! Example: Action: write_file_content[{"path":"result.txt","content":"..."}] Call a tool!`,
+          content: 'NO TOOL! Example: Action: write_file_content[{"path":"result.txt","content":"..."}] Call a tool!',
         });
       } else {
         history.push({
           role: 'user',
-          content: `NO TOOL (step ${step})! Use Action: toolName[{"key":"value"}]`,
+          content: 'NO TOOL (step ' + step + ')! Use Action: toolName[{"key":"value"}]',
         });
       }
       continue;
@@ -154,15 +134,10 @@ export async function runRLM(
       }
 
       const result = await executeTool(action.name, action.args);
-
-      // Validate result via subagent (fixes format issues, detects errors)
-      const validated = await validateToolResult(action.name, action.args, result);
-      const finalResult = validated.output;
-
-      stepResults.push({ tool: action.name, args: action.args, result: finalResult });
+      stepResults.push({ tool: action.name, args: action.args, result });
 
       // Track created files
-      if (action.name === Tool.WriteFile && !finalResult.startsWith('Error') && !finalResult.startsWith('Ошибка')) {
+      if (action.name === Tool.WriteFile && !result.startsWith('Error') && !result.startsWith('Ошибка')) {
         const filePath = (action.args as Record<string, unknown>)?.path as string;
         if (filePath && !filePath.startsWith('/')) {
           filesCreated.push(filePath);
