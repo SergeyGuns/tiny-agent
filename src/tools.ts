@@ -129,7 +129,7 @@ export const tools: Record<string, ToolFunction> = {
     } catch (e: unknown) { return `create_directory error: ${e instanceof Error ? e.message : String(e)}`; }
   },
 
-  [Tool.WriteFile]: (args: Record<string, unknown>) => {
+  [Tool.WriteFile]: async (args: Record<string, unknown>) => {
     try {
       const rawPath = (args.path ?? args.file ?? args.filename ?? args.file_name) as string;
       if (!rawPath || typeof rawPath !== 'string') return 'write_file_content: нужен path';
@@ -139,17 +139,36 @@ export const tools: Record<string, ToolFunction> = {
       const p = path.resolve(rawPath);
       const dir = path.dirname(p);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      let content: string = typeof args.content === 'object' ? JSON.stringify(args.content, null, 2) : String(args.content);
-      if (content.startsWith('[') || content.startsWith('{')) {
-        try { JSON.parse(content); } catch {
-          try { const unescaped = content.replace(/\\"/g, '"'); JSON.parse(unescaped); content = unescaped; } catch {
-            try { const fixed = content.replace(/\\\\"/g, '"'); JSON.parse(fixed); content = fixed; } catch { /* keep original */ }
-          }
-        }
-      }
-      fs.writeFileSync(p, content, 'utf-8');
-      if (!fs.existsSync(p)) return `write_file_content error: файл ${p} не создан`;
-      return `Файл записан: ${p}`;
+
+      const rawContent: string = typeof args.content === 'object'
+        ? JSON.stringify(args.content, null, 2)
+        : String(args.content);
+
+      // Fetch format spec dynamically
+      const { getFileSpec, validateAndWriteFile } = await import('./format-specs.js');
+      const spec = await getFileSpec(rawPath, async (q: string) => {
+        const { getMcpClient } = await import('./mcp-client.js');
+        const client = await getMcpClient();
+        if (!client) return '';
+        return client.callTool('get-web-search-summaries', { query: q, limit: 3 });
+      });
+
+      // Delegate to subagent: content + spec → validated file
+      const result = await validateAndWriteFile(
+        p,
+        rawContent,
+        spec,
+        async (messages) => {
+          const { queryLLM, LLM_PROFILES } = await import('./llm.js');
+          return queryLLM(messages as any, LLM_PROFILES.subAgent);
+        },
+        (filePath, content) => {
+          fs.writeFileSync(filePath, content, 'utf-8');
+        },
+      );
+
+      if (!result.success) return `write_file_content error: ${result.error}`;
+      return `Файл записан: ${p}${result.error ? ' (warning: ' + result.error + ')' : ''}`;
     } catch (e: unknown) { console.error(`[write_file_content] ERROR: ${e instanceof Error ? e.message : String(e)}`); return `write_file_content error: ${e instanceof Error ? e.message : String(e)}`; }
   },
 
