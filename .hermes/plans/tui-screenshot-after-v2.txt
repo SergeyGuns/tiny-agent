@@ -1,0 +1,80 @@
+# ═══════════════════════════════════════════════════════════════
+# tiny-agent TUI — Cyberpunk Neon Edition (v2)
+# Текстовый скриншот: ПОСЛЕ всех изменений
+# ═══════════════════════════════════════════════════════════════
+
+=== Приветствие ===
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃    _____ ___  _   _     _    ____ ____  ___ _____ _   _                      ┃
+┃   |_   _/ _ \| \ | |   / \  / ___|_ _\|_ _| ____| \ | |                      ┃
+┃     | || | | |  \| |  / _ \| |  _ | |  | ||  _| |  \| |                      ┃
+┃     | || |_| | |\  | / ___ \ |_| || |  | || |___| |\  |                      ┃
+┃     |_| \___/|_| \_|/_/   \_\____|___|_____|_| \_|                       ┃
+┃   tiny-agent v1.0 — cyberpunk edition                                        ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+┌─────────────────────────────────  COMMANDS  ─────────────────────────────────┐
+│ \plan     — planning mode (read/search only)                                 │
+│ \write    — write mode (full access)                                         │
+│ \steps    — show step history                                                │
+│ \expand N  — expand step N                                                   │
+│ \test     — run test output (no LLM)                                         │
+│ \provider — manage LLM providers                                             │
+│ \exit     — exit agent                                                       │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  SYSTEM STATUS  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ MODEL: qwen/qwen3.5-9b   MODE: WRITE   DIR: /home/serg/tiny-agent            ┃
+┃ GIT: qwen-thinking   CTX: 0/128k                                             ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+│ [WRITE] │ >
+
+=== Тестовый режим (\test) — компактный вывод шагов ===
+
+│  1 ▸ Plan: Read the file and find the definition
+    ◆ read_file_content({"path":"src/lib.ts"})
+    → File src/lib.ts, 23 lines read successfully
+
+│  2 ▸ Thought: Found the function at line 15
+    ◆ read_file_content({"path":"src/config.ts"})
+    → File src/config.ts, 114 lines read successfully
+
+│  3 ▸ Thought: All data collected, writing report
+    ◆ write_file_content({"path":"output.md","content":"# Report"})
+    → File written: output.md (1024 bytes)
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  COMPLETE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ 3 steps — use \steps to review                                               ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+=== История шагов (\steps) ===
+
+┌──────────────────────────────  STEP HISTORY  ────────────────────────────────┐
+│  1 ▸ Plan: Read the file and find the definition                             │
+│  2 ▸ Thought: Found the function at line 15                                  │
+│  3 ▸ Thought: All data collected, writing report                             │
+└──────────────────────────────────────────────────────────────────────────────┘
+  Use \expand <N> to expand a step
+
+=== Раскрытие шага (\expand 2) ===
+
+┌──────────────────────────  STEP 2 (expanded)  ───────────────────────────────┐
+│ THOUGHT: Found the function at line 15                                       │
+│ PLAN: Check the imports next                                                 │
+│                                                                              │
+│   ◆ read_file_content({"path":"src/config.ts"})                              │
+│   → File src/config.ts, 114 lines read successfully                          │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+# ═══════════════════════════════════════════════════════════════
+# Что изменилось (v2):
+# - Логотип: TINY AGENT (ASCII буквы вместо box-drawing)
+# - Шаги: компактный режим (одна строка на шаг)
+# - Команда \steps — показать историю шагов
+# - Команда \expand N — раскрыть шаг N полностью
+# - Команда \test — тестовый режим без LLM
+# - Режим PLAN корректно отображается
+# ═══════════════════════════════════════════════════════════════

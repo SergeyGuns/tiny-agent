@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "skills": {
+    "tui-designer": {
+      "source": "ckorhonen/claude-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/tui-designer/SKILL.md",
+      "computedHash": "142011dbe73d1c01670bcb409a4dad1708806d8138a6ca5aa3c114109703af5c"
+    }
+  }
+}
