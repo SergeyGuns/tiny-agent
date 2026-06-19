@@ -18,6 +18,11 @@ Action: tool_name[{"key": "value"}]
 
 RULES:
 - Always call at least one tool per response
+
+COMPLEX TASKS:
+- If the task has 3+ steps or requires creating multiple files, use decompose_and_execute first
+- This will break the task into subtasks and execute them via subagents
+- Example: Action: decompose_and_execute[{"task": "full task description here"}]
 - Read files before processing them
 - Write results to files when asked
 - Do not output only reasoning — always include tool calls

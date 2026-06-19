@@ -1,4 +1,5 @@
 import { queryLLM, LLM_PROFILES } from './llm.js';
+import { executeDelegated } from './task-decomposer.js';
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -23,6 +24,7 @@ export enum Tool {
   ExecShell = 'execute_shell_command',
   QueryLLM = 'query_language_model',
   SignalComplete = 'signal_task_complete',
+  DecomposeAndExecute = 'decompose_and_execute',
 }
 
 export const ALL_TOOLS: Tool[] = Object.values(Tool);
@@ -170,6 +172,20 @@ export const tools: Record<string, ToolFunction> = {
       if (!result.success) return `write_file_content error: ${result.error}`;
       return `Файл записан: ${p}${result.error ? ' (warning: ' + result.error + ')' : ''}`;
     } catch (e: unknown) { console.error(`[write_file_content] ERROR: ${e instanceof Error ? e.message : String(e)}`); return `write_file_content error: ${e instanceof Error ? e.message : String(e)}`; }
+  },
+
+  // ── Delegated task execution ──
+  // Breaks complex task into subtasks, executes each via subagent, reflects on progress
+  'decompose_and_execute': async (args: Record<string, unknown>) => {
+    try {
+      const task = args.task as string;
+      if (!task) return 'decompose_and_execute: нужен task';
+      const result = await executeDelegated(task);
+      if (result.success) {
+        return `Task completed. Results:\n${result.results.join('\n---\n')}`;
+      }
+      return `Task failed: ${result.error}`;
+    } catch (e: unknown) { return `decompose_and_execute error: ${e instanceof Error ? e.message : String(e)}`; }
   },
 
   [Tool.SearchInFiles]: async (args: Record<string, unknown>) => {
@@ -375,6 +391,18 @@ export const toolSchemas: Record<string, object> = {
       type: "object",
       properties: {},
       required: [],
+    },
+  },
+
+  [Tool.DecomposeAndExecute]: {
+    name: Tool.DecomposeAndExecute,
+    description: "Break a complex task into subtasks and execute them via subagents. Use this tool when the task is complex and requires multiple steps. The tool will: 1) decompose the task, 2) execute each subtask via subagent, 3) validate results, 4) reflect on progress.",
+    parameters: {
+      type: "object",
+      properties: {
+        task: { type: "string", description: "The full task description to decompose and execute." },
+      },
+      required: ["task"],
     },
   },
 };
