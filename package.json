@@ -7,7 +7,6 @@
     "build": "tsc",
     "start": "tsc && node dist/agent.js",
     "tui": "tsc && node dist/agent.js",
-    "dev": "tsc && node dist/development_framework.js",
     "clean": "node -e \"const fs = require('fs'); ['dist', 'session.log', 'bench-report.json'].forEach(p => fs.existsSync(p) && fs.rmSync(p, {recursive: true}))\"",
     "test": "npx tsc ; node --test --test-force-exit dist/test/lib.test.js",
     "test:tui": "node --test --test-timeout=120000 --test-force-exit dist/test/tui.test.js",
