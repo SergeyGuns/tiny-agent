@@ -10,6 +10,7 @@ import type { Message, ToolCallRecord } from '../types.js';
 import { tools, Tool } from './tools.js';
 import { parseAllActions, parseWriteFileArgs } from './parser.js';
 import { queryLLM, classifyIsReady, classifySearchLoop } from './llm.js';
+import { validateToolResult } from './with-subagent.js';
 import { LLM_PROFILES, LLMProfileName } from './llm.js';
 import { BENCH_SYSTEM_PROMPT } from './prompt.js';
 import { RESULT_TRUNCATE_LENGTH } from './config.js';
@@ -153,10 +154,15 @@ export async function runRLM(
       }
 
       const result = await executeTool(action.name, action.args);
-      stepResults.push({ tool: action.name, args: action.args, result });
+
+      // Validate result via subagent (fixes format issues, detects errors)
+      const validated = await validateToolResult(action.name, action.args, result);
+      const finalResult = validated.output;
+
+      stepResults.push({ tool: action.name, args: action.args, result: finalResult });
 
       // Track created files
-      if (action.name === Tool.WriteFile && !result.startsWith('Error') && !result.startsWith('Ошибка')) {
+      if (action.name === Tool.WriteFile && !finalResult.startsWith('Error') && !finalResult.startsWith('Ошибка')) {
         const filePath = (action.args as Record<string, unknown>)?.path as string;
         if (filePath && !filePath.startsWith('/')) {
           filesCreated.push(filePath);
