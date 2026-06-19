@@ -228,8 +228,16 @@ export async function classifyTaskType(prompt: string): Promise<TaskTypeResult> 
 
 // ─── Search Loop Classifier ────────────────────────────────────
 // Determines if the agent is stuck in a search loop.
+// Returns true if the agent is looping (searching/fetching/asking without writing).
 
-const SEARCH_LOOP_PROMPT = `You are a search loop detector. Given the task and recent tool call history, determine if the agent is stuck in a search loop (searching/fetching without writing).
+const SEARCH_LOOP_PROMPT = `You are a search loop detector. Given the task and recent tool call history, determine if the agent is stuck in a search loop (repeatedly searching/fetching/asking without making progress toward the goal).
+
+Signs of a loop:
+- Multiple search_web calls with similar queries and empty/irrelevant results
+- Multiple fetch_url_content calls without subsequent write_file_content
+- Multiple query_language_model calls asking about the same topic
+- Agent keeps asking for clarification instead of doing the work
+- No files created after many search/fetch/query calls
 
 Respond with ONLY "LOOP" or "OK".`;
 
@@ -238,17 +246,20 @@ export async function classifySearchLoop(
   toolCalls: { tool: string; result: string }[],
   filesCreated: string[],
 ): Promise<boolean> {
+  // No files created and many search-like calls → likely looping
+  const searchCalls = toolCalls.filter(c =>
+    c.tool === 'search_web' || c.tool === 'fetch_url_content' || c.tool === 'query_language_model'
+  );
+  if (searchCalls.length < 3) return false;
   if (filesCreated.length > 0) return false;
-  const searchCalls = toolCalls.filter(c => c.tool === 'search_web' || c.tool === 'fetch_url_content');
-  if (searchCalls.length < 2) return false;
 
   try {
-    const recentSearches = searchCalls.slice(-3).map((c, i) =>
-      `[${i + 1}] ${c.tool}: ${c.result.substring(0, 100)}`
+    const recentSearches = searchCalls.slice(-5).map((c, i) =>
+      `[${i + 1}] ${c.tool}: ${c.result.substring(0, 80)}`
     ).join('\n');
     const messages: Message[] = [
       { role: 'system', content: SEARCH_LOOP_PROMPT },
-      { role: 'user', content: `Task: "${prompt.substring(0, 200)}"\n\nRecent searches:\n${recentSearches}\n\nFiles created: ${filesCreated.length}\n\nLOOP or OK?` },
+      { role: 'user', content: `Task: "${prompt.substring(0, 200)}"\n\nRecent tool calls (last 5):\n${recentSearches}\n\nFiles created: ${filesCreated.length}\n\nLOOP or OK?` },
     ];
     const response = await queryLLM(messages, LLM_PROFILES.classifier, 2);
     return /LOOP/i.test(response);
@@ -274,6 +285,74 @@ export async function classifyRefactor(prompt: string, filePath: string): Promis
     return /REFACTOR/i.test(response);
   } catch {
     return false;
+  }
+}
+
+// ─── Readiness Classifier ───────────────────────────────────────
+// Determines whether the model's response is a final answer or
+// whether it needs to continue exploring/calling tools.
+
+const READINESS_PROMPT = `You are a response classifier. Given:
+1. The original user task
+2. The model's current response (which has NO tool calls)
+3. What tools were called so far
+
+Determine if the model's response is a FINAL ANSWER that completes the task, or if it needs MORE WORK (continue exploring, searching, reading files).
+
+Respond with ONLY "READY" or "MORE_WORK".
+
+Examples:
+- Task: "Describe the project", Response: "This project is a multi-agent framework...", Tools: [list_dir, read_file x5] → READY
+- Task: "Find all TODO comments", Response: "I need to search more files...", Tools: [search_in_files] → MORE_WORK
+- Task: "What files exist?", Response: "The project has src/, test/, package.json", Tools: [list_dir] → READY
+- Task: "Refactor variable X to Y", Response: "I found the file but haven't changed it yet", Tools: [read_file] → MORE_WORK
+- Task: "Describe the project", Response: "Let me check more files to understand the structure", Tools: [list_dir, read_file x2] → MORE_WORK`;
+
+export interface ReadinessResult {
+  isReady: boolean;
+  raw: string;
+}
+
+export async function classifyIsReady(
+  task: string,
+  response: string,
+  toolCalls: { tool: string; args: Record<string, unknown> }[],
+): Promise<ReadinessResult> {
+  const defaultResult: ReadinessResult = { isReady: false, raw: '' };
+
+  // If response is very short (< 20 chars), it's not a meaningful answer
+  if (response.trim().length < 20) return defaultResult;
+
+  // If response contains explicit "Action:" prefix, it's not a final answer
+  if (/Action:\s*\w+\[/.test(response)) return defaultResult;
+
+  // Build tool summary — just tool names and paths, not full results
+  const toolSummary = toolCalls.slice(-10).map(c => {
+    const path = (c.args as any)?.path || (c.args as any)?.query || (c.args as any)?.url || '';
+    return `${c.tool}(${path})`;
+  }).join(', ');
+
+  try {
+    const messages: Message[] = [
+      { role: 'system', content: READINESS_PROMPT },
+      {
+        role: 'user',
+        content: `Task: "${task.substring(0, 200)}"
+
+Model's response (no tool calls):
+"${response.substring(0, 400)}"
+
+Tools called so far (${toolCalls.length} total, last 10):
+${toolSummary || '(none)'}
+
+READY or MORE_WORK?`,
+      },
+    ];
+    const classifierResponse = await queryLLM(messages, LLM_PROFILES.classifier, 2);
+    const isReady = /READY/i.test(classifierResponse) && !/MORE_WORK/i.test(classifierResponse);
+    return { isReady, raw: classifierResponse };
+  } catch {
+    return defaultResult;
   }
 }
 

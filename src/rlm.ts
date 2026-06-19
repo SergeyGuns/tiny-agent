@@ -9,15 +9,17 @@ import * as path from 'node:path';
 import type { Message, ToolCallRecord } from '../types.js';
 import { tools, Tool } from './tools.js';
 import { parseAllActions, parseWriteFileArgs } from './parser.js';
-import { queryLLM } from './llm.js';
+import { queryLLM, classifyIsReady, classifySearchLoop } from './llm.js';
 import { LLM_PROFILES, LLMProfileName } from './llm.js';
 import { BENCH_SYSTEM_PROMPT } from './prompt.js';
 import { RESULT_TRUNCATE_LENGTH } from './config.js';
 
 // ─── Callbacks ───────────────────────────────────────────
 export interface RLMCallbacks {
-  onStep?: (step: number, calls: { tool: string; args: Record<string, unknown>; result: string }[]) => void;
+  onStep?: (step: number, response: string, results: { tool: string; args: Record<string, unknown>; result: string }[]) => void;
+  onToolCall?: (step: number, tool: string, args: Record<string, unknown>, result: string) => void;
   onComplete?: (steps: number) => void;
+  onContextUpdate?: (messages: Message[]) => void;
 }
 
 // ─── Execute a single tool call ─────────────────────────────
@@ -48,21 +50,28 @@ async function executeTool(
 // ─── RLM Executor ─────────────────────────────────────────────
 export async function runRLM(
   prompt: string,
-  maxSteps: number = 10,
+  maxSteps: number = 15,
   callbacks?: RLMCallbacks,
   profile: LLMProfileName = 'rlm',
+  toolsFilter?: string[],
 ): Promise<{ steps: number; toolCalls: ToolCallRecord[] }> {
   const history: Message[] = [
     { role: 'system', content: BENCH_SYSTEM_PROMPT },
     { role: 'user', content: prompt },
   ];
+  callbacks?.onContextUpdate?.(history);
   const allToolCalls: ToolCallRecord[] = [];
   const filesCreated: string[] = [];
+  let emptySteps = 0;
 
   for (let step = 1; step <= maxSteps; step++) {
+    callbacks?.onContextUpdate?.(history);
     let response: string;
     try {
-      response = await queryLLM(history, LLM_PROFILES[profile]);
+      response = await queryLLM(history, {
+        ...LLM_PROFILES[profile],
+        toolsFilter,
+      });
     } catch (e) {
       if (step < maxSteps) {
         history.push({ role: 'user', content: 'LLM returned empty response. Try again.' });
@@ -76,16 +85,53 @@ export async function runRLM(
     // Parse ALL actions from the response
     const actions = parseAllActions(response);
 
+    // ── No actions parsed → check if LLM is ready to answer ──
     if (actions.length === 0) {
-      // No action — nudge the model
-      history.push({
-        role: 'user',
-        content: 'NO TOOL CALLED! Use: Action: toolName[{"key":"value"}]',
-      });
+      // Case 1: No tools called yet → direct answer (e.g. "Привет!")
+      if (allToolCalls.length === 0 && response.trim().length > 0) {
+        callbacks?.onStep?.(step, response, []);
+        callbacks?.onComplete?.(step);
+        return { steps: step, toolCalls: allToolCalls };
+      }
+
+      // Case 2: Tools were called → use classifier to decide
+      if (allToolCalls.length > 0 && response.trim().length >= 20) {
+        const readiness = await classifyIsReady(prompt, response, allToolCalls);
+        if (readiness.isReady) {
+          callbacks?.onStep?.(step, response, []);
+          callbacks?.onComplete?.(step);
+          return { steps: step, toolCalls: allToolCalls };
+        }
+        // Classifier says MORE_WORK — fall through to nudge below
+      }
+
+      // Case 3: Short/empty response → nudge
+      emptySteps++;
+      if (emptySteps >= 3) {
+        history.push({
+          role: 'user',
+          content: `NO TOOL ${emptySteps} steps! Use Action: toolName[{"key":"value"}] or signal_task_complete[]`,
+        });
+        emptySteps = 0;
+        continue;
+      }
+      if (step === 1) {
+        history.push({
+          role: 'user',
+          content: `NO TOOL! Example: Action: write_file_content[{"path":"result.txt","content":"..."}] Call a tool!`,
+        });
+      } else {
+        history.push({
+          role: 'user',
+          content: `NO TOOL (step ${step})! Use Action: toolName[{"key":"value"}]`,
+        });
+      }
       continue;
     }
 
-    // Execute all actions in sequence, collect results
+    emptySteps = 0;
+
+    // ── Execute all actions in sequence, collect results ──
     const stepResults: { tool: string; args: Record<string, unknown>; result: string }[] = [];
     let shouldStop = false;
 
@@ -98,6 +144,12 @@ export async function runRLM(
         }
         shouldStop = true;
         break;
+      }
+
+      // Enforce toolsFilter if set
+      if (toolsFilter && !toolsFilter.includes(action.name)) {
+        stepResults.push({ tool: action.name, args: action.args, result: `Tool "${action.name}" not allowed in this mode.` });
+        continue;
       }
 
       const result = await executeTool(action.name, action.args);
@@ -123,7 +175,12 @@ export async function runRLM(
       });
     }
 
-    callbacks?.onStep?.(step, stepResults);
+    callbacks?.onStep?.(step, response, stepResults);
+
+    // Fire individual onToolCall for each tool
+    for (const r of stepResults) {
+      callbacks?.onToolCall?.(step, r.tool, r.args, r.result);
+    }
 
     // Feed all results back as a single observation
     if (stepResults.length > 0) {
@@ -132,8 +189,25 @@ export async function runRLM(
         .join('\n');
       history.push({
         role: 'user',
-        content: `Results:\n${observations}\n\nCRITICAL: If you performed fetch_url_content(), you MUST immediately write_file_content() after. Task complete? Then signal_task_complete[].`,
+        content: `Results:\n${observations}\n\nIf the task is done, call signal_task_complete[].`,
       });
+    }
+
+    // ── LLM-based search loop detection ──
+    // If the agent is stuck searching without writing files, force it to write.
+    if (allToolCalls.length > 0 && filesCreated.length === 0 && step >= 5) {
+      const isLooping = await classifySearchLoop(prompt, allToolCalls.map(c => ({ tool: c.tool, result: c.result })), filesCreated);
+      if (isLooping) {
+        history.push({
+          role: 'user',
+          content: `WARNING: You appear to be stuck in a search loop. You have made ${allToolCalls.length} tool calls without creating any output file. STOP searching immediately. Write your report NOW using write_file_content with whatever information you have gathered. If search results were empty, write the report based on your existing knowledge.`,
+        });
+        // Give it 2 more steps to write the file, then force-stop
+        if (step >= maxSteps - 2) {
+          callbacks?.onComplete?.(step);
+          return { steps: step, toolCalls: allToolCalls };
+        }
+      }
     }
 
     if (shouldStop) {
@@ -141,37 +215,33 @@ export async function runRLM(
       return { steps: step, toolCalls: allToolCalls };
     }
 
-    // Nudge: if too many files created, stop
+    // Safety: too many files created
     if (filesCreated.length > 10) {
       callbacks?.onComplete?.(step);
       return { steps: step, toolCalls: allToolCalls };
-    }
-
-    // Nudge: if no action in step, force model to call tool
-    if (allToolCalls.length === 0) {
-      history.push({
-        role: 'user',
-        content: 'CRITICAL: No tool calls in this step! You MUST make at least one tool call. Use search_web, fetch_url_content, read_file_content, write_file_content, or signal_task_complete[].',
-      });
-    }
-
-    // Nudge: if fetch_url_content called but no write_file_content, force it
-    if (stepResults.some(r => r.tool === 'fetch_url_content') && !stepResults.some(r => r.tool === Tool.WriteFile)) {
-      history.push({
-        role: 'user',
-        content: 'CRITICAL: You called fetch_url_content() but no write_file_content! You MUST write the content to a file after fetch_url_content().',
-      });
-    }
-
-    // Nudge: if validation done but no report, force report file
-    if (stepResults.some(r => r.tool === Tool.WriteFile && r.result.includes('JSON')) && !stepResults.some(r => r.result.includes('report.txt'))) {
-      history.push({
-        role: 'user',
-        content: 'CRITICAL: You validated/processed JSON but no report file! Create report.txt with summary and signal_task_complete[].',
-      });
     }
   }
 
   callbacks?.onComplete?.(maxSteps);
   return { steps: maxSteps, toolCalls: allToolCalls };
+}
+
+// ─── Plan mode: read-only + search only ──────────────────────
+// Uses RLM with a toolsFilter to restrict to read/search tools.
+
+export const PLAN_ALLOWED_TOOLS: string[] = [
+  Tool.SearchWeb,
+  Tool.FetchUrl,
+  Tool.ListDir,
+  Tool.ReadFile,
+  Tool.SearchInFiles,
+  Tool.SignalComplete,
+];
+
+export async function runPlanLoop(
+  prompt: string,
+  maxSteps: number = 10,
+  callbacks?: RLMCallbacks,
+): Promise<{ steps: number; toolCalls: ToolCallRecord[] }> {
+  return runRLM(prompt, maxSteps, callbacks, 'plan', PLAN_ALLOWED_TOOLS);
 }

@@ -1,15 +1,16 @@
 // ═══════════════════════════════════════════════════════════════
 // lib.ts — barrel re-export for backwards compatibility
-// All logic lives in src/ since the v12 refactor.
+// All logic lives in src/ since the v13 refactor.
 // ═══════════════════════════════════════════════════════════════
 
 export { extractTextFromHtml, parseDdgHtml } from './src/html.js';
 export { searchDuckDuckGo, translateRuToEn } from './src/search.js';
 export { tools } from './src/tools.js';
 export { BENCH_SYSTEM_PROMPT } from './src/prompt.js';
-export { queryLLM, sleep } from './src/llm.js';
-export { runAgentLoop, runReActLoop, runPlanLoop } from './src/reactor.js';
-export type { ReActCallbacks } from './src/reactor.js';
+export { queryLLM, sleep, classifyIsReady } from './src/llm.js';
+export { runRLM as runAgentLoop, runPlanLoop } from './src/rlm.js';
+export { initMcpTools } from './src/tools.js';
+export type { RLMCallbacks as ReActCallbacks } from './src/rlm.js';
 export type { ToolCallRecord } from './types.js';
 export type { DdgResult } from './src/html.js';
 export { loadEnv, DEFAULT_MAX_STEPS, loadProviders, saveProviders, getActiveProvider, setActiveProvider } from './src/config.js';
@@ -18,6 +19,3 @@ export { providerAdd, providerList, providerUse, providerRemove, fetchModels } f
 
 // Parser utilities (exported for tests)
 export { parseAction, parseAllActions, parseWriteFileArgs } from './src/parser.js';
-
-// RLM executor
-export { runRLM } from './src/rlm.js';

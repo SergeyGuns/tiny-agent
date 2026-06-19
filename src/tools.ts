@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import type { ToolFunction } from '../types.js';
 import { searchDuckDuckGo } from './search.js';
 import { extractTextFromHtml } from './html.js';
+import { getMcpClient, createMcpToolFunction, mcpToolToSchema } from './mcp-client.js';
 import { FETCH_TIMEOUT_MS, COMMAND_TIMEOUT_MS } from './config.js';
 
 // ─── Tool names (enum) ─────────────────────────────────────────
@@ -39,6 +40,20 @@ export const PLAN_ALLOWED_TOOLS: Tool[] = [
 
 export const tools: Record<string, ToolFunction> = {
   [Tool.SearchWeb]: async (args: Record<string, unknown>) => {
+    // Use MCP web-search if available, fallback to Wikipedia API
+    const mcpClient = await getMcpClient().catch(() => null);
+    if (mcpClient) {
+      try {
+        return await mcpClient.callTool('full-web-search', {
+          query: args.query as string,
+          limit: Math.min(Math.max(Number(args.limit) || 5, 1), 10),
+          includeContent: true,
+        });
+      } catch (e) {
+        // Fallback to Wikipedia API on MCP error
+      }
+    }
+    // Fallback: Wikipedia API
     try {
       const query = args.query as string;
       const limit = Math.min(Math.max(Number(args.limit) || 5, 1), 10);
@@ -53,6 +68,18 @@ export const tools: Record<string, ToolFunction> = {
   },
 
   [Tool.FetchUrl]: async (args: Record<string, unknown>) => {
+    // Use MCP web-search if available, fallback to direct fetch
+    const mcpClient = await getMcpClient().catch(() => null);
+    if (mcpClient) {
+      try {
+        return await mcpClient.callTool('get-single-web-page-content', {
+          url: args.url as string,
+        });
+      } catch (e) {
+        // Fallback to direct fetch on MCP error
+      }
+    }
+    // Fallback: direct fetch
     try {
       const url = args.url as string;
       if (!url.startsWith('http://') && !url.startsWith('https://')) {
@@ -172,6 +199,28 @@ export const tools: Record<string, ToolFunction> = {
     return 'DONE';
   },
 };
+
+// ─── MCP Web Search tools (loaded at runtime) ───────────────────
+// These are populated by initMcpTools() at startup and merged into `tools` above.
+
+export const mcpToolSchemas: Record<string, object> = {};
+
+/** Initialize MCP tools from web-search-mcp server and merge into main tools */
+export async function initMcpTools(): Promise<void> {
+  const client = await getMcpClient();
+  if (!client) {
+    console.error('[MCP] Web search MCP not available, using fallback');
+    return;
+  }
+
+  const mcpToolList = client.getTools();
+  for (const mcpTool of mcpToolList) {
+    const fn = createMcpToolFunction(client, mcpTool);
+    (tools as any)[mcpTool.name] = fn;
+    mcpToolSchemas[mcpTool.name] = mcpToolToSchema(mcpTool);
+    console.log(`[MCP] Registered tool: ${mcpTool.name}`);
+  }
+}
 
 // ─── Tool schemas for LLM function calling ─────────────────────
 

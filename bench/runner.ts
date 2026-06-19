@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { runAgentLoop, queryLLM, loadEnv } from '../lib.js';
+import { initMcpTools } from '../src/tools.js';
 import { allTasks } from './tasks/index.js';
 import type { ToolCallRecord } from '../types.js';
 import type {
@@ -232,6 +233,8 @@ interface RunOptions {
 
 async function runBenchmark(opts: RunOptions = {}): Promise<BenchmarkReport> {
   loadEnv();
+  // Initialize MCP web search tools
+  await initMcpTools();
   // Clear reasoning log for new benchmark session
   try { fs.writeFileSync('/tmp/rlm-reasoning.log', ''); } catch {}
   const { categories, difficulties, taskIds, maxSteps = 15, verbose = true } = opts;
@@ -270,7 +273,7 @@ async function runBenchmark(opts: RunOptions = {}): Promise<BenchmarkReport> {
 
     // Cooldown между задачами чтобы LM Studio не перегружался
     if (i < tasks.length - 1) {
-      await new Promise(r => setTimeout(r, 5000));
+      await new Promise(r => setTimeout(r, 500));
     }
 
     if (verbose) {
