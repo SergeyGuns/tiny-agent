@@ -15,12 +15,12 @@ export interface LLMOptions {
 export const LLM_PROFILES = {
   toolCall:  { temperature: 0.7, enable_thinking: false, max_tokens: 1500 },
   rlm:       { temperature: 0.7, enable_thinking: false, max_tokens: 1500 },
-  subAgent:  { temperature: 0.5, enable_thinking: true,  max_tokens: 2000 },
-  research:  { temperature: 0.6, enable_thinking: true,  max_tokens: 1500 },
-  planning:  { temperature: 0.4, enable_thinking: true,  max_tokens: 2000 },
+  subAgent:  { temperature: 0.5, enable_thinking: false, max_tokens: 2000 },
+  research:  { temperature: 0.6, enable_thinking: false, max_tokens: 1500 },
+  planning:  { temperature: 0.4, enable_thinking: false, max_tokens: 2000 },
   terminal:  { temperature: 0.3, enable_thinking: false, max_tokens: 1000 },
   tool_use:  { temperature: 0.7, enable_thinking: false, max_tokens: 1500 },
-  plan:      { temperature: 0.4, enable_thinking: true,  max_tokens: 2000 },
+  plan:      { temperature: 0.4, enable_thinking: false, max_tokens: 2000 },
   classifier: { temperature: 0.3, enable_thinking: false, max_tokens: 500 },
 } as const;
 
@@ -80,6 +80,15 @@ export async function queryLLM(messages: Message[], options?: LLMOptions, retrie
       const msg = choices?.[0]?.message as Record<string, unknown> | undefined;
       const rawContent = (msg?.content as string | undefined) || '';
       const content = stripThinkingTags(rawContent);
+      const toolCalls = (msg?.tool_calls as any[]) || [];
+
+      // If model returned tool calls (even without content), that's a valid response
+      if (toolCalls.length > 0 && (!content || content.length === 0)) {
+        // Model wants to call tools — return a synthetic action line
+        // This will be parsed by parseAllActions as a tool call
+        const tc = toolCalls[0];
+        return `Action: ${tc.function.name}[${tc.function.arguments}]`;
+      }
 
       if (!content || content.length === 0) {
         if (attempt < retries) {
