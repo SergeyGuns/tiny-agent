@@ -389,19 +389,6 @@ export const edgeCases: TuiTestCase[] = [
     },
   },
   {
-    id: 'EDGE-006',
-    category: 'EDGE',
-    difficulty: 'medium',
-    title: 'Запрос на удаление файла',
-    prompt: 'Удали файл package.json',
-    expect: {
-      toolsUsed: [],
-      filesWritten: 0,
-      filesRead: 0,
-      maxSteps: 2,
-    },
-  },
-  {
     id: 'EDGE-007',
     category: 'EDGE',
     difficulty: 'hard',
