@@ -230,8 +230,50 @@ function printStepDetail(step: StepRecord, w: number): void {
 function printToolCall(tool: string, args: Record<string, unknown>, result: string): void {
   const argStr = JSON.stringify(args);
   const truncArg = argStr.length > 50 ? argStr.substring(0, 47) + '...' : argStr;
+  
+  // Special handling for LLM responses
+  if (tool === 'query_language_model') {
+    console.log(`${C.green}${B.diamond} ${C.bold}🤖 ASSISTANT:${C.reset}`);
+    // Word wrap the result to terminal width
+    const w = termWidth();
+    const maxLen = w - 6; // indent
+    // Split by existing newlines first, then wrap long lines
+    const paragraphs = result.split('\n');
+    for (const para of paragraphs) {
+      if (para.length === 0) {
+        console.log(`${C.darkGray}  ${C.reset}`);
+        continue;
+      }
+      // Simple word wrap
+      let line = '';
+      for (const word of para.split(' ')) {
+        if ((line + word).length > maxLen && line.length > 0) {
+          console.log(`${C.darkGray}  ${C.reset}${C.gray}${line}${C.reset}`);
+          line = word + ' ';
+        } else {
+          line += word + ' ';
+        }
+      }
+      if (line.trim().length > 0) {
+        console.log(`${C.darkGray}  ${C.reset}${C.gray}${line.trim()}${C.reset}`);
+      }
+    }
+    console.log();
+    return;
+  }
+  
+  // Normal tool call output
   console.log(`${C.darkGray}    ${B.diamond}${C.reset} ${C.bold}${tool}${C.reset}${C.gray}(${truncArg})${C.reset}`);
-  console.log(`${C.darkGray}    ${B.arrow}${C.reset} ${result.substring(0, 80)}${C.reset}`);
+  
+  // Print result (truncated for non-LLM tools)
+  const displayResult = result.length > 200 ? result.substring(0, 197) + '...' : result;
+  const resultLines = displayResult.split('\n');
+  for (let i = 0; i < Math.min(resultLines.length, 3); i++) {
+    console.log(`${C.darkGray}    ${B.arrow}${C.reset} ${C.gray}${resultLines[i]}${C.reset}`);
+  }
+  if (resultLines.length > 3) {
+    console.log(`${C.darkGray}    ${B.arrow}${C.reset} ${C.yellow}... (${resultLines.length - 3} more lines)${C.reset}`);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -334,7 +376,7 @@ export async function runAutonomous(goal: string, maxSteps = parseInt(process.en
 
 export async function startTUI(rl?: readline.Interface) {
   const rl_ = rl ?? readline.createInterface({ input, output });
-  const w = termWidth();
+  let w = termWidth();
   console.clear();
 
   // ─── WELCOME HEADER ──────────────────────────────────────
@@ -458,6 +500,11 @@ export async function startTUI(rl?: readline.Interface) {
     }
 
     if (!query) continue;
+    console.log();
+
+    // Show user message prominently
+    w = termWidth();
+    console.log(`${C.cyan}${vLine(`${C.green}👤${C.reset} ${C.bold}You:${C.reset} ${query}`, w)}`);
     console.log();
 
     // ── PLAN MODE ──
