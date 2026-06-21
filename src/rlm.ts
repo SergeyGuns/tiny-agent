@@ -123,6 +123,28 @@ export async function runRLM(
           stepResults.push({ tool: action.name, args: action.args, result: 'Cannot signal complete without doing work.' });
           continue;
         }
+        // Check if the model has actually done substantive work (not just searched)
+        const hasWrittenFiles = filesCreated.length > 0;
+        const hasSearched = allToolCalls.some(c => c.tool === 'search_web' || c.tool === 'fetch_url_content');
+        if (!hasWrittenFiles && hasSearched && step < maxSteps - 1) {
+          // Model is trying to complete after only searching — nudge to write files first
+          stepResults.push({
+            tool: action.name,
+            args: action.args,
+            result: 'You have only searched but not written any output file yet. Write your findings to a file first, then signal complete.',
+          });
+          continue;
+        }
+        shouldStop = true;
+        break;
+      }
+
+      // Special handling: query_language_model should be the FINAL action
+      // It means "respond to user" — don't continue the loop after this
+      if (action.name === 'query_language_model') {
+        const result = await executeTool(action.name, action.args);
+        stepResults.push({ tool: action.name, args: action.args, result });
+        // This IS the answer — stop the loop
         shouldStop = true;
         break;
       }
@@ -170,7 +192,7 @@ export async function runRLM(
         .join('\n');
       history.push({
         role: 'user',
-        content: `Results:\n${observations}\n\nIf the task is done, call signal_task_complete[].`,
+        content: `Results:\n${observations}\n\nCHECK: Did you create ALL required files? Did you write ALL requested output? Did you perform ALL required actions? If yes, call signal_task_complete[]. If no, continue working — you still have steps remaining.`,
       });
     }
 
