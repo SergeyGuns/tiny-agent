@@ -230,11 +230,27 @@ export async function runRLM(
     // Feed all results back as a single observation
     if (stepResults.length > 0) {
       const observations = stepResults
+        .filter(r => r.tool !== 'loop_detector') // skip internal messages
         .map((r, i) => `[${i + 1}] ${r.tool}: ${r.result.substring(0, RESULT_TRUNCATE_LENGTH)}`)
         .join('\n');
+
+      // Build context for the model
+      let contextInfo = '';
+      if (filesCreated.length > 0) {
+        contextInfo += `\n\n📁 Files created so far: ${filesCreated.join(', ')}`;
+      }
+      // Don't re-read files created on this step
+      const filesCreatedThisStep = stepResults
+        .filter(r => r.tool === Tool.WriteFile && !r.result.startsWith('Error') && !r.result.startsWith('Ошибка'))
+        .map(r => (r.args as Record<string, unknown>)?.path as string)
+        .filter(Boolean);
+      if (filesCreatedThisStep.length > 0) {
+        contextInfo += `\n⚠️ Do NOT re-read these files you just created: ${filesCreatedThisStep.join(', ')}`;
+      }
+
       history.push({
         role: 'user',
-        content: `Results:\n${observations}\n\nCHECK: Did you create ALL required files? Did you write ALL requested output? Did you perform ALL required actions? If yes, call signal_task_complete[]. If no, continue working — you still have steps remaining.`,
+        content: `Results:\n${observations}${contextInfo}\n\nCHECK: Did you create ALL required files? Did you write ALL requested output? Did you perform ALL required actions? If yes, call signal_task_complete[]. If no, continue working — you still have steps remaining.`,
       });
     }
 
