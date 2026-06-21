@@ -337,35 +337,33 @@ function printToolCall(tool: string, args: Record<string, unknown>, result: stri
   
   // Special handling for LLM responses
   if (tool === 'query_language_model') {
-    console.log(`${C.green}${B.diamond} ${C.bold}🤖 ASSISTANT:${C.reset}`);
-    // Word wrap the result to terminal width
-    const w = termWidth();
-    const maxLen = w - 6; // indent
-    // Split by existing newlines first, then wrap long lines
+    const wLocal = termWidth();
+    const maxLen = wLocal - 6;
+    console.log(`${C.bgDark}${C.magenta}┏━━━ ${C.bold}${C.yellow}🤖 ОТВЕТ АССИСТЕНТА${C.reset}${C.magenta}${'━'.repeat(Math.max(0, wLocal - 22))}┓${C.reset}`);
     const paragraphs = result.split('\n');
     for (const para of paragraphs) {
-      if (para.length === 0) {
-        console.log(`${C.darkGray}  ${C.reset}`);
+      if (para.trim().length === 0) {
+        console.log(`${C.bgDark}${C.magenta}┃${C.reset}${' '.repeat(wLocal - 2)}${C.bgDark}${C.magenta}┃${C.reset}`);
         continue;
       }
-      // Simple word wrap
       let line = '';
       for (const word of para.split(' ')) {
-        if ((line + word).length > maxLen && line.length > 0) {
-          console.log(`${C.darkGray}  ${C.reset}${C.gray}${line}${C.reset}`);
-          line = word + ' ';
+        if ((line + ' ' + word).trim().length > maxLen && line.length > 0) {
+          console.log(`${C.bgDark}${C.magenta}┃${C.reset} ${C.white}${line.trim()}${' '.repeat(Math.max(0, wLocal - 3 - line.trim().length))}${C.bgDark}${C.magenta}┃${C.reset}`);
+          line = word;
         } else {
-          line += word + ' ';
+          line = (line + ' ' + word).trim();
         }
       }
       if (line.trim().length > 0) {
-        console.log(`${C.darkGray}  ${C.reset}${C.gray}${line.trim()}${C.reset}`);
+        console.log(`${C.bgDark}${C.magenta}┃${C.reset} ${C.white}${line}${' '.repeat(Math.max(0, wLocal - 3 - line.length))}${C.bgDark}${C.magenta}┃${C.reset}`);
       }
     }
+    console.log(`${C.bgDark}${C.magenta}┗${'━'.repeat(wLocal - 2)}┛${C.reset}`);
     console.log();
     return;
   }
-  
+
   // Normal tool call output
   console.log(`${C.darkGray}    ${B.diamond}${C.reset} ${C.bold}${tool}${C.reset}${C.gray}(${truncArg})${C.reset}`);
   
@@ -617,21 +615,39 @@ export async function startTUI(rl?: readline.Interface) {
     if (!query) continue;
     console.log();
 
-    // Show user message prominently
+    // Show user message as dialog bubble
     w = termWidth();
-    console.log(`${C.cyan}${vLine(`${C.green}👤${C.reset} ${C.bold}You:${C.reset} ${query}`, w)}`);
-    // Show attached file names in dim color
+    // User message with bright styling
+    console.log(`${C.bgDark}${C.cyan}┏━━━ ${C.bold}${C.green}👤 ВАШ ЗАПРОС${C.reset}${C.cyan}${'━'.repeat(Math.max(0, w - 16))}┓${C.reset}`);
+    // Word wrap the query for display
+    const maxQueryLen = w - 4;
+    const queryLines: string[] = [];
+    let currentLine = '';
+    for (const word of query.split(' ')) {
+      if ((currentLine + ' ' + word).trim().length > maxQueryLen) {
+        if (currentLine) queryLines.push(currentLine.trim());
+        currentLine = word;
+      } else {
+        currentLine = (currentLine + ' ' + word).trim();
+      }
+    }
+    if (currentLine) queryLines.push(currentLine);
+    for (const line of queryLines) {
+      console.log(`${C.bgDark}${C.cyan}┃${C.reset} ${C.bold}${C.white}${line}${C.reset}${' '.repeat(Math.max(0, w - 3 - line.length))}${C.bgDark}${C.cyan}┃${C.reset}`);
+    }
+    // Show attached file names
     if (hasFileRefs) {
       const fileRefs = (query.match(/@[^\s@]+/g) || []);
       for (const ref of fileRefs) {
-        const fileName = ref.slice(1); // remove @
+        const fileName = ref.slice(1);
         const filePath = path.resolve(fileName);
         const exists = fs.existsSync(filePath);
-        const fileColor = exists ? C.darkGray : C.red;
         const fileIcon = exists ? '📄' : '❌';
-        console.log(`${C.cyan}${vLine(`${fileColor}  ${fileIcon} ${fileName}${C.reset}`, w)}`);
+        const fileLabel = `  ${fileIcon} ${fileName}`;
+        console.log(`${C.bgDark}${C.cyan}┃${C.reset} ${C.darkGray}${fileLabel}${' '.repeat(Math.max(0, w - 3 - fileLabel.length))}${C.bgDark}${C.cyan}┃${C.reset}`);
       }
     }
+    console.log(`${C.bgDark}${C.cyan}┗${'━'.repeat(w - 2)}┛${C.reset}`);
     console.log();
 
     // ── PLAN MODE ──
@@ -719,23 +735,29 @@ export async function startTUI(rl?: readline.Interface) {
           console.log(`${C.cyan}${vLine(compactStepLine(currentStepId + step - 1, currentMode, response, w), w)}`);
           // If no tool calls (simple conversation), print the full response
           if (results.length === 0 && response.trim().length > 0) {
-            console.log(`${C.green}${B.diamond} ${C.bold}🤖 ASSISTANT:${C.reset}`);
             const maxLen = w - 6;
+            // Assistant header with bright styling
+            console.log(`${C.bgDark}${C.magenta}┏━━━ ${C.bold}${C.yellow}🤖 ОТВЕТ АССИСТЕНТА${C.reset}${C.magenta}${'━'.repeat(Math.max(0, w - 22))}┓${C.reset}`);
+            // Word wrap and print response
             for (const para of response.split('\n')) {
-              if (para.length === 0) { console.log(`${C.darkGray}  ${C.reset}`); continue; }
+              if (para.trim().length === 0) {
+                console.log(`${C.bgDark}${C.magenta}┃${C.reset}${' '.repeat(w - 2)}${C.bgDark}${C.magenta}┃${C.reset}`);
+                continue;
+              }
               let line = '';
               for (const word of para.split(' ')) {
-                if ((line + word).length > maxLen && line.length > 0) {
-                  console.log(`${C.darkGray}  ${C.reset}${C.gray}${line}${C.reset}`);
-                  line = word + ' ';
+                if ((line + ' ' + word).trim().length > maxLen && line.length > 0) {
+                  console.log(`${C.bgDark}${C.magenta}┃${C.reset} ${C.white}${line.trim()}${' '.repeat(Math.max(0, w - 3 - line.trim().length))}${C.bgDark}${C.magenta}┃${C.reset}`);
+                  line = word;
                 } else {
-                  line += word + ' ';
+                  line = (line + ' ' + word).trim();
                 }
               }
               if (line.trim().length > 0) {
-                console.log(`${C.darkGray}  ${C.reset}${C.gray}${line.trim()}${C.reset}`);
+                console.log(`${C.bgDark}${C.magenta}┃${C.reset} ${C.white}${line}${' '.repeat(Math.max(0, w - 3 - line.length))}${C.bgDark}${C.magenta}┃${C.reset}`);
               }
             }
+            console.log(`${C.bgDark}${C.magenta}┗${'━'.repeat(w - 2)}┛${C.reset}`);
             console.log();
           }
         },
