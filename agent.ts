@@ -524,7 +524,7 @@ export async function startTUI(rl?: readline.Interface) {
 
     // ── Resolve @filename references ──
     const resolvedQuery = resolveFileReferences(query);
-    const hasFileRefs = resolvedQuery !== query;
+    const hasFileRefs = /@[^\s@]+/.test(query); // check if query contains @filename
 
     // ── EXIT ──
     if (query.toLowerCase() === 'exit' || query === '\\exit') {
@@ -620,10 +620,17 @@ export async function startTUI(rl?: readline.Interface) {
     // Show user message prominently
     w = termWidth();
     console.log(`${C.cyan}${vLine(`${C.green}👤${C.reset} ${C.bold}You:${C.reset} ${query}`, w)}`);
-    // Show attached files indicator
+    // Show attached file names in dim color
     if (hasFileRefs) {
-      const fileCount = (query.match(/@[^\s@]+/g) || []).length;
-      console.log(`${C.cyan}${vLine(`${C.darkGray}  📎 ${fileCount} file(s) attached${C.reset}`, w)}`);
+      const fileRefs = (query.match(/@[^\s@]+/g) || []);
+      for (const ref of fileRefs) {
+        const fileName = ref.slice(1); // remove @
+        const filePath = path.resolve(fileName);
+        const exists = fs.existsSync(filePath);
+        const fileColor = exists ? C.darkGray : C.red;
+        const fileIcon = exists ? '📄' : '❌';
+        console.log(`${C.cyan}${vLine(`${fileColor}  ${fileIcon} ${fileName}${C.reset}`, w)}`);
+      }
     }
     console.log();
 
