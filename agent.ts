@@ -9,6 +9,107 @@ import type { Message } from './types.js';
 import { providerAdd, providerList, providerUse, providerRemove } from './src/provider.js';
 
 // ═══════════════════════════════════════════════════════════════
+// FILE AUTOCOMPLETE — @filename support
+// ═══════════════════════════════════════════════════════════════
+
+/** Get list of files in current directory for autocomplete */
+function getFileList(dir: string = '.', prefix: string = ''): string[] {
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    const files: string[] = [];
+    for (const entry of entries) {
+      // Skip hidden files and node_modules
+      if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'dist') continue;
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        // Add directory with trailing slash
+        if (entry.name.startsWith(prefix)) {
+          files.push(entry.name + '/');
+        }
+        // Recurse one level for subdirectories
+        if (prefix.startsWith(entry.name + '/')) {
+          const subPrefix = prefix.slice(entry.name.length + 1);
+          const subFiles = getFileList(fullPath, subPrefix);
+          for (const sf of subFiles) {
+            files.push(entry.name + '/' + sf);
+          }
+        }
+      } else {
+        if (entry.name.startsWith(prefix)) {
+          files.push(entry.name);
+        }
+      }
+    }
+    return files.sort();
+  } catch {
+    return [];
+  }
+}
+
+/** Readline completer function for @filename autocomplete */
+function fileCompleter(line: string): [string[], string] {
+  // Find the last @mention in the line
+  const atIndex = line.lastIndexOf('@');
+  if (atIndex === -1) {
+    return [[], line];
+  }
+
+  // Get the partial filename after @
+  const afterAt = line.slice(atIndex + 1);
+  // Don't autocomplete if there's a space after @
+  if (afterAt.includes(' ')) {
+    return [[], line];
+  }
+
+  // Determine directory and prefix
+  let dir = '.';
+  let prefix = afterAt;
+
+  const lastSlash = afterAt.lastIndexOf('/');
+  if (lastSlash !== -1) {
+    const dirPart = afterAt.slice(0, lastSlash);
+    prefix = afterAt.slice(lastSlash + 1);
+    dir = dirPart || '.';
+  }
+
+  const files = getFileList(dir, prefix);
+  // Reconstruct the full path for each match
+  const dirPrefix = lastSlash !== -1 ? afterAt.slice(0, lastSlash + 1) : '';
+  const matches = files.map(f => '@' + dirPrefix + f);
+
+  return [matches, line];
+}
+
+/** Resolve @filename references in a prompt, returning resolved text */
+function resolveFileReferences(prompt: string): string {
+  const atPattern = /@([^\s@]+)/g;
+  let result = prompt;
+  let match;
+
+  while ((match = atPattern.exec(prompt)) !== null) {
+    const ref = match[1];
+    const filePath = path.resolve(ref);
+
+    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+      try {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        // Replace @filename with file content (truncated to 500 chars)
+        const truncated = content.length > 500
+          ? content.substring(0, 500) + `\n... (${content.length} chars total, truncated)`
+          : content;
+        const replacement = `\n--- File: ${ref} ---\n${truncated}\n--- End of ${ref} ---`;
+        result = result.replace(`@${ref}`, replacement);
+      } catch {
+        // If can't read, leave as-is
+      }
+    }
+    // If file doesn't exist, leave @filename as-is (agent will handle error)
+  }
+
+  return result;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // CYBERPUNK NEON PALETTE — 256-color ANSI
 // ═══════════════════════════════════════════════════════════════
 
@@ -378,7 +479,13 @@ export async function runAutonomous(goal: string, maxSteps = parseInt(process.en
 // ═══════════════════════════════════════════════════════════════
 
 export async function startTUI(rl?: readline.Interface) {
-  const rl_ = rl ?? readline.createInterface({ input, output });
+  // Create readline with file autocomplete if not provided
+  const rl_ = rl ?? readline.createInterface({
+    input,
+    output,
+    completer: fileCompleter,
+    terminal: true,
+  });
   let w = termWidth();
   console.clear();
 
@@ -402,6 +509,7 @@ export async function startTUI(rl?: readline.Interface) {
   console.log(`${C.cyan}${vLine(`${C.yellow}\\test${C.reset}     ${C.gray}— run test output (no LLM)${C.reset}`, w)}`);
   console.log(`${C.cyan}${vLine(`${C.yellow}\\provider${C.reset} ${C.gray}— manage LLM providers${C.reset}`, w)}`);
   console.log(`${C.cyan}${vLine(`${C.yellow}\\exit${C.reset}     ${C.gray}— exit agent${C.reset}`, w)}`);
+  console.log(`${C.cyan}${vLine(`${C.magenta}@file${C.reset}     ${C.gray}— attach file content (TAB autocomplete)${C.reset}`, w)}`);
   console.log(`${C.cyan}${bottomBorder(w)}${C.reset}`);
   console.log();
 
@@ -413,6 +521,10 @@ export async function startTUI(rl?: readline.Interface) {
     const modeLabel = currentMode === 'plane' ? 'PLAN' : 'WRITE';
     const prompt = `${C.cyan}${B.v}${C.reset} ${modeColor}${C.bold}[${modeLabel}]${C.reset} ${C.cyan}${B.v}${C.reset} ${C.bold}>${C.reset} `;
     const query = (await rl_.question(prompt)).trim();
+
+    // ── Resolve @filename references ──
+    const resolvedQuery = resolveFileReferences(query);
+    const hasFileRefs = resolvedQuery !== query;
 
     // ── EXIT ──
     if (query.toLowerCase() === 'exit' || query === '\\exit') {
@@ -508,6 +620,11 @@ export async function startTUI(rl?: readline.Interface) {
     // Show user message prominently
     w = termWidth();
     console.log(`${C.cyan}${vLine(`${C.green}👤${C.reset} ${C.bold}You:${C.reset} ${query}`, w)}`);
+    // Show attached files indicator
+    if (hasFileRefs) {
+      const fileCount = (query.match(/@[^\s@]+/g) || []).length;
+      console.log(`${C.cyan}${vLine(`${C.darkGray}  📎 ${fileCount} file(s) attached${C.reset}`, w)}`);
+    }
     console.log();
 
     // ── PLAN MODE ──
@@ -587,7 +704,7 @@ export async function startTUI(rl?: readline.Interface) {
       const currentToolCalls: StepRecord['toolCalls'] = [];
       const writeStart = Date.now();
 
-      await runAgentLoop(query, parseInt(process.env.MAX_STEPS || String(DEFAULT_MAX_STEPS), 10), {
+      await runAgentLoop(resolvedQuery, parseInt(process.env.MAX_STEPS || String(DEFAULT_MAX_STEPS), 10), {
         onStep: (step, response, results) => {
           currentResponse += response + '\n';
           if (/^(Plan|Thought):/m.test(response)) { currentMode = 'plane'; }
