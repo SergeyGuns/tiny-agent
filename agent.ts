@@ -228,6 +228,9 @@ function printStepDetail(step: StepRecord, w: number): void {
 }
 
 function printToolCall(tool: string, args: Record<string, unknown>, result: string): void {
+  // Skip signal_task_complete — it's not a real tool call
+  if (tool === 'signal_task_complete') return;
+
   const argStr = JSON.stringify(args);
   const truncArg = argStr.length > 50 ? argStr.substring(0, 47) + '...' : argStr;
   

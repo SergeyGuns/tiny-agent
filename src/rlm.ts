@@ -95,11 +95,16 @@ export async function runRLM(
     // Parse ALL actions from the response
     const actions = parseAllActions(response);
 
-    // ── No actions parsed → check if this is a simple conversation ──
+    // ── No actions parsed → check if this is a final answer ──
     if (actions.length === 0) {
-      // If first step and response looks like a direct answer (not reasoning) — treat as final
+      // If we already did some work (read files, searched) and model responds with text — that's the answer
+      if (allToolCalls.length > 0 && !response.includes('Action:') && response.trim().length > 0) {
+        callbacks?.onStep?.(step, response, []);
+        callbacks?.onComplete?.(step);
+        return { steps: step, toolCalls: allToolCalls };
+      }
+      // If first step and response looks like a direct answer (simple conversation)
       if (step === 1 && !response.includes('Action:') && response.trim().length > 0) {
-        // Model responded with plain text — this IS the answer (simple conversation)
         callbacks?.onStep?.(step, response, []);
         callbacks?.onComplete?.(step);
         return { steps: step, toolCalls: allToolCalls };
