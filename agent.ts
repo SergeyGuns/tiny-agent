@@ -247,6 +247,7 @@ export async function runAutonomous(goal: string, maxSteps = parseInt(process.en
   console.log(`${C.cyan}${bottomBorder(w, true)}${C.reset}`);
   console.log();
 
+  const startTime = Date.now();
   const currentStepId = stepCounter + 1;
   let currentResponse = '';
   const currentToolCalls: StepRecord['toolCalls'] = [];
@@ -257,6 +258,10 @@ export async function runAutonomous(goal: string, maxSteps = parseInt(process.en
       if (/^(Plan|Thought):/m.test(response)) { currentMode = 'plane'; }
       else { currentMode = 'write'; }
       const w2 = termWidth();
+      // Progress bar
+      const pct = Math.round((step / maxSteps) * 100);
+      const bar = progressBar(step, maxSteps, 20);
+      console.log(`${C.cyan}${vLine(`${C.darkGray}Step ${step}/${maxSteps} ${bar} ${pct}%${C.reset}`, w2, true)}`);
       console.log(`${C.cyan}${vLine(compactStepLine(currentStepId + step - 1, currentMode, response, w2), w2)}`);
     },
     onToolCall: (step, tool, args, result) => {
@@ -265,11 +270,57 @@ export async function runAutonomous(goal: string, maxSteps = parseInt(process.en
       console.log();
     },
     onComplete: (steps) => {
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       stepHistory.push({ id: currentStepId, type: currentMode === 'plane' ? 'plan' : 'write', response: currentResponse.trim(), toolCalls: currentToolCalls });
       stepCounter = currentStepId;
       const w2 = termWidth();
-      console.log(`${C.green}${topBorder(w2, ' COMPLETE ', true)}${C.reset}`);
-      console.log(`${C.green}${vLine(`${C.bold}${steps}${C.reset}${C.green} steps — use \\steps to review${C.reset}`, w2, true)}`);
+
+      // Collect summary stats
+      const filesWritten = currentToolCalls.filter(tc => tc.tool === 'write_file_content' && !tc.result.startsWith('Error') && !tc.result.startsWith('Ошибка'));
+      const filesRead = currentToolCalls.filter(tc => tc.tool === 'read_file_content' && !tc.result.startsWith('Error') && !tc.result.startsWith('Ошибка'));
+      const errors = currentToolCalls.filter(tc => tc.result.startsWith('Error') || tc.result.startsWith('Ошибка') || tc.result.startsWith('Tool'));
+
+      const completeIcon = errors.length === 0 ? ' ✓' : ' ✗';
+      console.log(`${C.green}${topBorder(w2, `${completeIcon} COMPLETE `, true)}${C.reset}`);
+      console.log(`${C.green}${vLine(`${C.bold}${steps}${C.reset}${C.green} steps  ${C.darkGray}│${C.reset}  ${C.gray}time:${C.reset} ${C.yellow}${elapsed}s${C.reset}  ${C.darkGray}│${C.reset}  ${C.gray}tools:${C.reset} ${C.cyan}${currentToolCalls.length}${C.reset}`, w2, true)}`);
+
+      if (filesWritten.length > 0 || filesRead.length > 0) {
+        const fileSummary: string[] = [];
+        if (filesWritten.length > 0) fileSummary.push(`${C.green}${filesWritten.length} written${C.reset}`);
+        if (filesRead.length > 0) fileSummary.push(`${C.blue}${filesRead.length} read${C.reset}`);
+        console.log(`${C.green}${vLine(`${C.gray}files:${C.reset} ${fileSummary.join(', ')}`, w2, true)}`);
+      }
+
+      if (errors.length > 0) {
+        console.log(`${C.green}${vLine(`${C.gray}errors:${C.reset} ${C.red}${errors.length} tool error(s)${C.reset}`, w2, true)}`);
+      }
+
+      // Build task result summary
+      const resultParts: string[] = [];
+      if (filesWritten.length > 0) {
+        const fileNames = [...new Set(filesWritten.map(tc => {
+          const p = tc.args.path as string;
+          return p ? p.split('/').pop() || p : 'unknown';
+        }))].slice(0, 3).join(', ');
+        resultParts.push(`${C.green}${filesWritten.length} file(s) written${C.reset}${C.darkGray}(${fileNames})${C.reset}`);
+      }
+      if (filesRead.length > 0) {
+        const fileNames = [...new Set(filesRead.map(tc => {
+          const p = tc.args.path as string;
+          return p ? p.split('/').pop() || p : 'unknown';
+        }))].slice(0, 3).join(', ');
+        resultParts.push(`${C.blue}${filesRead.length} file(s) read${C.reset}${C.darkGray}(${fileNames})${C.reset}`);
+      }
+      if (errors.length > 0) {
+        resultParts.push(`${C.red}${errors.length} error(s)${C.reset}`);
+      }
+      if (resultParts.length === 0 && currentToolCalls.length > 0) {
+        resultParts.push(`${C.gray}task finished${C.reset}`);
+      }
+      if (resultParts.length > 0) {
+        console.log(`${C.green}${vLine(`${C.gray}result:${C.reset} ${resultParts.join(C.darkGray + ' | ' + C.reset)}`, w2, true)}`);
+      }
+
       console.log(`${C.green}${bottomBorder(w2, true)}${C.reset}`);
       console.log();
     },
@@ -414,11 +465,17 @@ export async function startTUI(rl?: readline.Interface) {
       const currentStepId = stepCounter + 1;
       let currentResponse = '';
       const currentToolCalls: StepRecord['toolCalls'] = [];
+      const planStart = Date.now();
 
       await runPlanLoop(query, 10, {
         onStep: (step, response) => {
           currentResponse += response + '\n';
-          console.log(`${C.blue}${vLine(compactStepLine(currentStepId + step - 1, 'plan', response, w), w)}`);
+          const w2 = termWidth();
+          // Progress bar for plan mode (max 10 steps)
+          const pct = Math.round((step / 10) * 100);
+          const bar = progressBar(step, 10, 15);
+          console.log(`${C.blue}${vLine(`${C.darkGray}Step ${step}/10 ${bar} ${pct}%${C.reset}`, w2)}`);
+          console.log(`${C.blue}${vLine(compactStepLine(currentStepId + step - 1, 'plan', response, w2), w2)}`);
         },
         onToolCall: (step, tool, args, result) => {
           currentToolCalls.push({ tool, args, result });
@@ -426,11 +483,50 @@ export async function startTUI(rl?: readline.Interface) {
           console.log();
         },
         onComplete: (steps) => {
+          const elapsed = ((Date.now() - planStart) / 1000).toFixed(1);
           stepHistory.push({ id: currentStepId, type: 'plan', response: currentResponse.trim(), toolCalls: currentToolCalls });
           stepCounter = currentStepId;
-          console.log(`${C.blue}${topBorder(w, ' PLAN COMPLETE ', true)}${C.reset}`);
-          console.log(`${C.blue}${vLine(`${C.bold}${steps}${C.reset}${C.blue} steps — use \\steps to review${C.reset}`, w, true)}`);
-          console.log(`${C.blue}${bottomBorder(w, true)}${C.reset}\n`);
+          const w2 = termWidth();
+
+          const filesRead = currentToolCalls.filter(tc => tc.tool === 'read_file_content' && !tc.result.startsWith('Error') && !tc.result.startsWith('Ошибка'));
+          const errors = currentToolCalls.filter(tc => tc.result.startsWith('Error') || tc.result.startsWith('Ошибка') || tc.result.startsWith('Tool'));
+
+          const completeIcon = errors.length === 0 ? ' ✓' : ' ✗';
+          console.log(`${C.blue}${topBorder(w2, ` PLAN COMPLETE${completeIcon} `, true)}${C.reset}`);
+          console.log(`${C.blue}${vLine(`${C.bold}${steps}${C.reset}${C.blue} steps  ${C.darkGray}│${C.reset}  ${C.gray}time:${C.reset} ${C.yellow}${elapsed}s${C.reset}  ${C.darkGray}│${C.reset}  ${C.gray}tools:${C.reset} ${C.cyan}${currentToolCalls.length}${C.reset}`, w2, true)}`);
+
+          if (filesRead.length > 0) {
+            const fileNames = [...new Set(filesRead.map(tc => {
+              const p = tc.args.path as string;
+              return p ? p.split('/').pop() || p : 'unknown';
+            }))].slice(0, 3).join(', ');
+            console.log(`${C.blue}${vLine(`${C.gray}files:${C.reset} ${C.blue}${filesRead.length} read${C.reset}${C.darkGray}(${fileNames})${C.reset}`, w2, true)}`);
+          }
+
+          if (errors.length > 0) {
+            console.log(`${C.blue}${vLine(`${C.gray}errors:${C.reset} ${C.red}${errors.length} tool error(s)${C.reset}`, w2, true)}`);
+          }
+
+          // Build task result summary
+          const resultParts: string[] = [];
+          if (filesRead.length > 0) {
+            const fileNames = [...new Set(filesRead.map(tc => {
+              const p = tc.args.path as string;
+              return p ? p.split('/').pop() || p : 'unknown';
+            }))].slice(0, 3).join(', ');
+            resultParts.push(`${C.blue}${filesRead.length} file(s) read${C.reset}${C.darkGray}(${fileNames})${C.reset}`);
+          }
+          if (errors.length > 0) {
+            resultParts.push(`${C.red}${errors.length} error(s)${C.reset}`);
+          }
+          if (resultParts.length === 0 && currentToolCalls.length > 0) {
+            resultParts.push(`${C.gray}task finished${C.reset}`);
+          }
+          if (resultParts.length > 0) {
+            console.log(`${C.blue}${vLine(`${C.gray}result:${C.reset} ${resultParts.join(C.darkGray + ' | ' + C.reset)}`, w2, true)}`);
+          }
+
+          console.log(`${C.blue}${bottomBorder(w2, true)}${C.reset}\n`);
         },
         onContextUpdate: (messages) => { updateContextLength(messages); },
       });
@@ -439,6 +535,7 @@ export async function startTUI(rl?: readline.Interface) {
       const currentStepId = stepCounter + 1;
       let currentResponse = '';
       const currentToolCalls: StepRecord['toolCalls'] = [];
+      const writeStart = Date.now();
 
       await runAgentLoop(query, parseInt(process.env.MAX_STEPS || String(DEFAULT_MAX_STEPS), 10), {
         onStep: (step, response) => {
@@ -453,11 +550,47 @@ export async function startTUI(rl?: readline.Interface) {
           console.log();
         },
         onComplete: (steps) => {
+          const elapsed = ((Date.now() - writeStart) / 1000).toFixed(1);
           stepHistory.push({ id: currentStepId, type: currentMode === 'plane' ? 'plan' : 'write', response: currentResponse.trim(), toolCalls: currentToolCalls });
           stepCounter = currentStepId;
-          console.log(`${C.green}${topBorder(w, ' COMPLETE ', true)}${C.reset}`);
-          console.log(`${C.green}${vLine(`${C.bold}${steps}${C.reset}${C.green} steps — use \\steps to review${C.reset}`, w, true)}`);
-          console.log(`${C.green}${bottomBorder(w, true)}${C.reset}\n`);
+          const w2 = termWidth();
+
+          const filesWritten = currentToolCalls.filter(tc => tc.tool === 'write_file_content' && !tc.result.startsWith('Error') && !tc.result.startsWith('Ошибка'));
+          const filesRead = currentToolCalls.filter(tc => tc.tool === 'read_file_content' && !tc.result.startsWith('Error') && !tc.result.startsWith('Ошибка'));
+          const errors = currentToolCalls.filter(tc => tc.result.startsWith('Error') || tc.result.startsWith('Ошибка') || tc.result.startsWith('Tool'));
+
+          const completeIcon = errors.length === 0 ? ' ✓' : ' ✗';
+          console.log(`${C.green}${topBorder(w2, `${completeIcon} COMPLETE `, true)}${C.reset}`);
+          console.log(`${C.green}${vLine(`${C.bold}${steps}${C.reset}${C.green} steps  ${C.darkGray}│${C.reset}  ${C.gray}time:${C.reset} ${C.yellow}${elapsed}s${C.reset}  ${C.darkGray}│${C.reset}  ${C.gray}tools:${C.reset} ${C.cyan}${currentToolCalls.length}${C.reset}`, w2, true)}`);
+
+          // Build task result summary
+          const resultParts: string[] = [];
+          if (filesWritten.length > 0) {
+            const fileNames = [...new Set(filesWritten.map(tc => {
+              const p = tc.args.path as string;
+              return p ? p.split('/').pop() || p : 'unknown';
+            }))].slice(0, 3).join(', ');
+            resultParts.push(`${C.green}${filesWritten.length} file(s) written${C.reset}${C.darkGray}(${fileNames})${C.reset}`);
+          }
+          if (filesRead.length > 0) {
+            const fileNames = [...new Set(filesRead.map(tc => {
+              const p = tc.args.path as string;
+              return p ? p.split('/').pop() || p : 'unknown';
+            }))].slice(0, 3).join(', ');
+            resultParts.push(`${C.blue}${filesRead.length} file(s) read${C.reset}${C.darkGray}(${fileNames})${C.reset}`);
+          }
+          if (errors.length > 0) {
+            resultParts.push(`${C.red}${errors.length} error(s)${C.reset}`);
+          }
+          if (resultParts.length === 0 && currentToolCalls.length > 0) {
+            resultParts.push(`${C.gray}task finished${C.reset}`);
+          }
+
+          if (resultParts.length > 0) {
+            console.log(`${C.green}${vLine(`${C.gray}result:${C.reset} ${resultParts.join(C.darkGray + ' | ' + C.reset)}`, w2, true)}`);
+          }
+
+          console.log(`${C.green}${bottomBorder(w2, true)}${C.reset}\n`);
         },
         onContextUpdate: (messages) => { updateContextLength(messages); },
       });
