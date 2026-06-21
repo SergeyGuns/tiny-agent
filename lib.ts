@@ -8,7 +8,7 @@ export { searchDuckDuckGo, translateRuToEn } from './src/search.js';
 export { tools } from './src/tools.js';
 export { BENCH_SYSTEM_PROMPT } from './src/prompt.js';
 export { queryLLM, sleep, classifyIsReady } from './src/llm.js';
-export { runRLM as runAgentLoop, runPlanLoop } from './src/rlm.js';
+export { runRLM as runAgentLoop, runPlanLoop, INTERACTIVE_TOOLS } from './src/rlm.js';
 export { initMcpTools } from './src/tools.js';
 export type { RLMCallbacks as ReActCallbacks } from './src/rlm.js';
 export type { ToolCallRecord } from './types.js';

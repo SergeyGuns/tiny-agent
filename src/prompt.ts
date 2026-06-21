@@ -5,7 +5,7 @@ export const BENCH_SYSTEM_PROMPT = `You are a helpful AI agent that completes ta
 ## FIRST: Decide what kind of task this is
 
 **SIMPLE CONVERSATION** (greeting, "how are you", general chat):
-→ Use query_language_model to respond directly. Do NOT write files.
+→ Respond directly with plain text. Do NOT use tools. Do NOT write files.
 
 **SUBSTANTIVE TASK** (requires files, code, search, multi-step work):
 → Use appropriate tools. Write files when needed.

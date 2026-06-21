@@ -4,7 +4,7 @@ import { stdin as input, stdout as output } from 'process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { loadEnv, DEFAULT_MAX_STEPS } from './lib.js';
-import { runAgentLoop, runPlanLoop } from './lib.js';
+import { runAgentLoop, runPlanLoop, INTERACTIVE_TOOLS } from './lib.js';
 import type { Message } from './types.js';
 import { providerAdd, providerList, providerUse, providerRemove } from './src/provider.js';
 
@@ -585,11 +585,32 @@ export async function startTUI(rl?: readline.Interface) {
       const writeStart = Date.now();
 
       await runAgentLoop(query, parseInt(process.env.MAX_STEPS || String(DEFAULT_MAX_STEPS), 10), {
-        onStep: (step, response) => {
+        onStep: (step, response, results) => {
           currentResponse += response + '\n';
           if (/^(Plan|Thought):/m.test(response)) { currentMode = 'plane'; }
           else { currentMode = 'write'; }
           console.log(`${C.cyan}${vLine(compactStepLine(currentStepId + step - 1, currentMode, response, w), w)}`);
+          // If no tool calls (simple conversation), print the full response
+          if (results.length === 0 && response.trim().length > 0) {
+            console.log(`${C.green}${B.diamond} ${C.bold}🤖 ASSISTANT:${C.reset}`);
+            const maxLen = w - 6;
+            for (const para of response.split('\n')) {
+              if (para.length === 0) { console.log(`${C.darkGray}  ${C.reset}`); continue; }
+              let line = '';
+              for (const word of para.split(' ')) {
+                if ((line + word).length > maxLen && line.length > 0) {
+                  console.log(`${C.darkGray}  ${C.reset}${C.gray}${line}${C.reset}`);
+                  line = word + ' ';
+                } else {
+                  line += word + ' ';
+                }
+              }
+              if (line.trim().length > 0) {
+                console.log(`${C.darkGray}  ${C.reset}${C.gray}${line.trim()}${C.reset}`);
+              }
+            }
+            console.log();
+          }
         },
         onToolCall: (step, tool, args, result) => {
           currentToolCalls.push({ tool, args, result });
@@ -632,15 +653,15 @@ export async function startTUI(rl?: readline.Interface) {
           if (resultParts.length === 0 && currentToolCalls.length > 0) {
             resultParts.push(`${C.gray}task finished${C.reset}`);
           }
-
           if (resultParts.length > 0) {
             console.log(`${C.green}${vLine(`${C.gray}result:${C.reset} ${resultParts.join(C.darkGray + ' | ' + C.reset)}`, w2, true)}`);
           }
 
-          console.log(`${C.green}${bottomBorder(w2, true)}${C.reset}\n`);
+          console.log(`${C.green}${bottomBorder(w2, true)}${C.reset}`);
+          console.log();
         },
         onContextUpdate: (messages) => { updateContextLength(messages); },
-      });
+      }, undefined, INTERACTIVE_TOOLS);
     }
 
     console.log();

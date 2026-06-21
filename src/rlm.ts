@@ -55,8 +55,18 @@ export async function runRLM(
   profile: LLMProfileName = 'rlm',
   toolsFilter?: string[],
 ): Promise<{ steps: number; toolCalls: ToolCallRecord[] }> {
+  // Build system prompt with filtered tools list if toolsFilter is set
+  let systemPrompt = BENCH_SYSTEM_PROMPT;
+  if (toolsFilter) {
+    const filteredList = toolsFilter.join(', ');
+    // Replace the Available tools line with filtered version
+    systemPrompt = BENCH_SYSTEM_PROMPT.replace(
+      /Available tools: .+$/,
+      `Available tools: ${filteredList}`
+    );
+  }
   const history: Message[] = [
-    { role: 'system', content: BENCH_SYSTEM_PROMPT },
+    { role: 'system', content: systemPrompt },
     { role: 'user', content: prompt },
   ];
   callbacks?.onContextUpdate?.(history);
@@ -85,8 +95,15 @@ export async function runRLM(
     // Parse ALL actions from the response
     const actions = parseAllActions(response);
 
-    // ── No actions parsed → nudge to call a tool ──
+    // ── No actions parsed → check if this is a simple conversation ──
     if (actions.length === 0) {
+      // If first step and response looks like a direct answer (not reasoning) — treat as final
+      if (step === 1 && !response.includes('Action:') && response.trim().length > 0) {
+        // Model responded with plain text — this IS the answer (simple conversation)
+        callbacks?.onStep?.(step, response, []);
+        callbacks?.onComplete?.(step);
+        return { steps: step, toolCalls: allToolCalls };
+      }
       emptySteps++;
       if (emptySteps >= 3) {
         history.push({
@@ -238,6 +255,19 @@ export const PLAN_ALLOWED_TOOLS: string[] = [
   Tool.ListDir,
   Tool.ReadFile,
   Tool.SearchInFiles,
+  Tool.SignalComplete,
+];
+
+// Interactive mode: all tools EXCEPT query_language_model (prevents self-recursion)
+export const INTERACTIVE_TOOLS: string[] = [
+  Tool.SearchWeb,
+  Tool.FetchUrl,
+  Tool.ListDir,
+  Tool.ReadFile,
+  Tool.WriteFile,
+  Tool.CreateDir,
+  Tool.SearchInFiles,
+  Tool.ExecShell,
   Tool.SignalComplete,
 ];
 
