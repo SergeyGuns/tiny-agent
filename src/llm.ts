@@ -82,12 +82,32 @@ export async function queryLLM(messages: Message[], options?: LLMOptions, retrie
       const content = stripThinkingTags(rawContent);
       const toolCalls = (msg?.tool_calls as any[]) || [];
 
-      // If model returned tool calls (even without content), that's a valid response
-      if (toolCalls.length > 0 && (!content || content.length === 0)) {
-        // Model wants to call tools — return a synthetic action line
-        // This will be parsed by parseAllActions as a tool call
-        const tc = toolCalls[0];
-        return `Action: ${tc.function.name}[${tc.function.arguments}]`;
+      // If model returned tool calls (even without content), convert ALL to Action lines
+      if (toolCalls.length > 0) {
+        const actionLines = toolCalls.map((tc: any) => {
+          const name = tc.function?.name || 'unknown';
+          const args = tc.function?.arguments || '{}';
+          // If we have content too, prepend it before action lines
+          return `Action: ${name}[${args}]`;
+        });
+        const result = content ? content + '\n' + actionLines.join('\n') : actionLines.join('\n');
+        return result;
+      }
+
+      // Handle case where content is a JSON array (some FC models do this)
+      if (content && content.trim().startsWith('[')) {
+        try {
+          const arr = JSON.parse(content);
+          if (Array.isArray(arr)) {
+            const actionLines = arr.map((item: any) => {
+              const name = item.name || item.function?.name || 'unknown';
+              const args = item.arguments || item.function?.arguments || '{}';
+              const argsStr = typeof args === 'string' ? args : JSON.stringify(args);
+              return `Action: ${name}[${argsStr}]`;
+            });
+            return actionLines.join('\n');
+          }
+        } catch { /* not valid JSON, return as-is */ }
       }
 
       if (!content || content.length === 0) {

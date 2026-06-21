@@ -73,6 +73,9 @@ export async function runRLM(
   const allToolCalls: ToolCallRecord[] = [];
   const filesCreated: string[] = [];
   let emptySteps = 0;
+  // Track repeated reads of the same file to prevent loops
+  const fileReadCounts: Record<string, number> = {};
+  const MAX_FILE_READS = 2; // max times to read the same file consecutively
 
   for (let step = 1; step <= maxSteps; step++) {
     callbacks?.onContextUpdate?.(history);
@@ -179,6 +182,23 @@ export async function runRLM(
 
       const result = await executeTool(action.name, action.args);
       stepResults.push({ tool: action.name, args: action.args, result });
+
+      // Track repeated reads of the same file to prevent loops
+      if (action.name === Tool.ReadFile) {
+        const filePath = (action.args as Record<string, unknown>)?.path as string;
+        if (filePath) {
+          fileReadCounts[filePath] = (fileReadCounts[filePath] || 0) + 1;
+          if (fileReadCounts[filePath] > MAX_FILE_READS) {
+            stepResults.push({
+              tool: 'loop_detector',
+              args: {},
+              result: `⚠️ File "${filePath}" has been read ${fileReadCounts[filePath]} times. Stop reading it. Analyze the data you already have and provide your answer.`,
+            });
+            shouldStop = true;
+            break;
+          }
+        }
+      }
 
       // Track created files
       if (action.name === Tool.WriteFile && !result.startsWith('Error') && !result.startsWith('Ошибка')) {

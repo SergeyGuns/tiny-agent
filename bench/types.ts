@@ -11,7 +11,7 @@ export type Category =
   | 'tool_use'   // Использование инструментов (Tau-Bench style)
   | 'research'   // Многошаговое исследование (GAIA style)
   | 'planning'   // Планирование и декомпозиция
-  | 'rlm';       // Recursive Language Model integration
+  | 'rlm';       // Рекурсивные вызовы LLM (RLM)
 
 export interface Task {
   id: string;                    // уникальный ID, например "T-001"

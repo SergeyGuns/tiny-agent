@@ -146,31 +146,15 @@ export const tools: Record<string, ToolFunction> = {
         ? JSON.stringify(args.content, null, 2)
         : String(args.content);
 
-      // Fetch format spec dynamically
-      const { getFileSpec, validateAndWriteFile } = await import('./format-specs.js');
-      const spec = await getFileSpec(rawPath, async (q: string) => {
-        const { getMcpClient } = await import('./mcp-client.js');
-        const client = await getMcpClient();
-        if (!client) return '';
-        return client.callTool('get-web-search-summaries', { query: q, limit: 3 });
-      });
+      // Check if file already exists — warn but still write
+      const fileExists = fs.existsSync(p);
 
-      // Delegate to subagent: content + spec → validated file
-      const result = await validateAndWriteFile(
-        p,
-        rawContent,
-        spec,
-        async (messages) => {
-          const { queryLLM, LLM_PROFILES } = await import('./llm.js');
-          return queryLLM(messages as any, LLM_PROFILES.subAgent);
-        },
-        (filePath, content) => {
-          fs.writeFileSync(filePath, content, 'utf-8');
-        },
-      );
-
-      if (!result.success) return `write_file_content error: ${result.error}`;
-      return `Файл записан: ${p}${result.error ? ' (warning: ' + result.error + ')' : ''}`;
+      // Direct file write — no subagent validation (faster, no data loss)
+      fs.writeFileSync(p, rawContent, 'utf-8');
+      if (fileExists) {
+        return `⚠️ Файл перезаписан: ${p}`;
+      }
+      return `Файл записан: ${p}`;
     } catch (e: unknown) { console.error(`[write_file_content] ERROR: ${e instanceof Error ? e.message : String(e)}`); return `write_file_content error: ${e instanceof Error ? e.message : String(e)}`; }
   },
 

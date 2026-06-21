@@ -101,13 +101,7 @@ async function injectFixtures(taskId: string, workDir: string): Promise<void> {
         },
         metadata: { version: '1.0', format: 'json' },
       }, null, 2),
-    },
-    'RLM-004': {
-      'notes.txt': 'This is an important note about the project.\nThis line is not important.\nAnother important finding here.\nWe discovered a critical bug in the system.\nThe team worked hard to fix it.',
-    },
-    'RLM-005': {
-      'code.js': 'function calculate() {\n  let temp = getData();\n  let temp2 = process(temp);\n  return temp2;\n}\n\nfunction process(x) {\n  let temp = x * 2;\n  return temp;\n}',
-    },
+    }
   };
 
   const data = fixtures[taskId];
@@ -151,7 +145,7 @@ function collectWrittenFiles(workDir: string): Map<string, string> {
 // ─── Выполнение одной задачи ──────────────────────────────────
 
 async function executeTask(task: Task, maxSteps = 12): Promise<TaskResult> {
-  // RLM: fewer steps needed since multiple tool calls per step
+  // Adaptive steps based on difficulty
   const adaptiveSteps = task.difficulty === 'expert' ? 20 : task.difficulty === 'hard' ? 16 : maxSteps;
   const workDir = mkdtempSync(path.join(tmpdir(), `bench-${task.id}-`));
   const toolRecords: ToolCallRecord[] = [];
@@ -236,7 +230,6 @@ async function runBenchmark(opts: RunOptions = {}): Promise<BenchmarkReport> {
   // Initialize MCP web search tools
   await initMcpTools();
   // Clear reasoning log for new benchmark session
-  try { fs.writeFileSync('/tmp/rlm-reasoning.log', ''); } catch {}
   const { categories, difficulties, taskIds, maxSteps = 15, verbose = true } = opts;
 
   let tasks = allTasks;
@@ -271,6 +264,10 @@ async function runBenchmark(opts: RunOptions = {}): Promise<BenchmarkReport> {
     const result = await executeTask(task, maxSteps);
     results.push(result);
 
+    // Save incremental results after each task (prevents data loss on hang)
+    const incrementalReport = buildReport(results);
+    writeFileSync('bench-report.json', JSON.stringify(incrementalReport, null, 2));
+
     // Cooldown между задачами чтобы LM Studio не перегружался
     if (i < tasks.length - 1) {
       await new Promise(r => setTimeout(r, 500));
@@ -302,7 +299,7 @@ async function runBenchmark(opts: RunOptions = {}): Promise<BenchmarkReport> {
 // ─── Отчёт ────────────────────────────────────────────────────
 
 function buildReport(results: TaskResult[]): BenchmarkReport {
-  const cats: Category[] = ['terminal', 'tool_use', 'research', 'planning', 'rlm'];
+  const cats: Category[] = ['terminal', 'tool_use', 'research', 'planning'];
   const diffs: Difficulty[] = ['easy', 'medium', 'hard', 'expert'];
 
   const byCategory = {} as Record<Category, CategorySummary>;
