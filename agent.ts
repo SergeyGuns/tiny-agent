@@ -77,7 +77,10 @@ function fileCompleter(line: string): [string[], string] {
   const dirPrefix = lastSlash !== -1 ? afterAt.slice(0, lastSlash + 1) : '';
   const matches = files.map(f => '@' + dirPrefix + f);
 
-  return [matches, line];
+  // Return the prefix (everything before @) as the second argument
+  // This preserves the text before @ when autocompleting
+  const beforeAt = line.slice(0, atIndex);
+  return [matches, beforeAt];
 }
 
 /** Resolve @filename references in a prompt, returning resolved text */
