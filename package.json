@@ -29,10 +29,13 @@
     "bench:unit": "npm test",
     "bench:category": "npx tsc ; node dist/bench/runner.js --category",
     "bench:task": "npx tsc ; node dist/bench/runner.js --task",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "publish": "npm publish --access public",
+    "deploy": "gh-pages -d docs"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
+    "gh-pages": "^6.3.0",
     "typescript": "^5.3.3"
   },
   "dependencies": {

@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>tiny-agent — Autonomous AI Coding Agent</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+
+  :root {
+    --cyan: #00ffff;
+    --magenta: #ff00ff;
+    --blue: #0066ff;
+    --pink: #ff1493;
+    --yellow: #ffff00;
+    --orange: #ff8800;
+    --green: #00ff00;
+    --green-dim: #00cc00;
+    --red: #ff0000;
+    --white: #ffffff;
+    --gray: #8a8a8a;
+    --dark-gray: #444444;
+    --bg-dark: #0a0a1a;
+    --bg-darker: #050510;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg-darker);
+    color: var(--white);
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+
+  /* Scanline overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0, 255, 255, 0.015) 2px,
+      rgba(0, 255, 255, 0.015) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* Glow cursor blink */
+  @keyframes blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+  }
+
+  .cursor::after {
+    content: '█';
+    animation: blink 1s infinite;
+    color: var(--cyan);
+  }
+
+  /* Neon glow text */
+  .neon-cyan { text-shadow: 0 0 7px var(--cyan), 0 0 10px var(--cyan), 0 0 21px var(--cyan); }
+  .neon-magenta { text-shadow: 0 0 7px var(--magenta), 0 0 10px var(--magenta), 0 0 21px var(--magenta); }
+  .neon-green { text-shadow: 0 0 7px var(--green), 0 0 10px var(--green); }
+  .neon-pink { text-shadow: 0 0 7px var(--pink), 0 0 10px var(--pink); }
+
+  /* Sections */
+  .section {
+    padding: 80px 20px;
+    max-width: 960px;
+    margin: 0 auto;
+  }
+
+  /* Hero */
+  .hero {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .hero::before {
+    content: '';
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 600px; height: 600px;
+    background: radial-gradient(circle, rgba(0,255,255,0.08) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .logo-ascii {
+    font-size: 10px;
+    line-height: 1.1;
+    color: var(--cyan);
+    text-shadow: 0 0 5px var(--cyan);
+    white-space: pre;
+    overflow-x: auto;
+    max-width: 100%;
+  }
+
+  .hero h1 {
+    font-size: 2.5rem;
+    margin: 30px 0 10px;
+    letter-spacing: 4px;
+  }
+
+  .hero .version {
+    color: var(--gray);
+    font-size: 0.9rem;
+    margin-bottom: 20px;
+  }
+
+  .hero .tagline {
+    color: var(--gray);
+    font-size: 1rem;
+    max-width: 600px;
+    margin: 0 auto 40px;
+  }
+
+  /* Buttons */
+  .btn-group {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-bottom: 60px;
+  }
+
+  .btn {
+    display: inline-block;
+    padding: 12px 28px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+    text-decoration: none;
+    border: 2px solid;
+    border-radius: 4px;
+    transition: all 0.3s ease;
+    cursor: pointer;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    background: transparent;
+  }
+
+  .btn-primary {
+    color: var(--cyan);
+    border-color: var(--cyan);
+    box-shadow: 0 0 10px rgba(0, 255, 255, 0.2), inset 0 0 10px rgba(0, 255, 255, 0.05);
+  }
+  .btn-primary:hover {
+    background: rgba(0, 255, 255, 0.1);
+    box-shadow: 0 0 20px rgba(0, 255, 255, 0.4), inset 0 0 15px rgba(0, 255, 255, 0.1);
+    text-shadow: 0 0 8px var(--cyan);
+  }
+
+  .btn-secondary {
+    color: var(--magenta);
+    border-color: var(--magenta);
+    box-shadow: 0 0 10px rgba(255, 0, 255, 0.2), inset 0 0 10px rgba(255, 0, 255, 0.05);
+  }
+  .btn-secondary:hover {
+    background: rgba(255, 0, 255, 0.1);
+    box-shadow: 0 0 20px rgba(255, 0, 255, 0.4), inset 0 0 15px rgba(255, 0, 255, 0.1);
+    text-shadow: 0 0 8px var(--magenta);
+  }
+
+  /* Install block */
+  .install-block {
+    background: rgba(0, 255, 255, 0.03);
+    border: 1px solid rgba(0, 255, 255, 0.15);
+    border-radius: 6px;
+    padding: 20px 30px;
+    max-width: 600px;
+    margin: 0 auto;
+    text-align: left;
+  }
+
+  .install-block .label {
+    color: var(--green);
+    font-size: 0.75rem;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+  }
+
+  .install-block code {
+    color: var(--cyan);
+    font-size: 1rem;
+    word-break: break-all;
+  }
+
+  .install-block .aliases {
+    margin-top: 12px;
+    color: var(--gray);
+    font-size: 0.8rem;
+  }
+
+  .install-block .aliases span {
+    color: var(--yellow);
+  }
+
+  /* Status bar */
+  .status-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: rgba(5, 5, 16, 0.95);
+    border-top: 1px solid rgba(0, 255, 255, 0.2);
+    padding: 8px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.7rem;
+    z-index: 1000;
+    backdrop-filter: blur(10px);
+  }
+
+  .status-bar .left { color: var(--cyan); }
+  .status-bar .right { color: var(--gray); }
+  .status-bar .dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    background: var(--green);
+    border-radius: 50%;
+    margin-right: 6px;
+    box-shadow: 0 0 6px var(--green);
+    animation: blink 2s infinite;
+  }
+
+  /* Section titles */
+  .section-title {
+    color: var(--cyan);
+    font-size: 1.5rem;
+    margin-bottom: 40px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid rgba(0, 255, 255, 0.2);
+    text-transform: uppercase;
+    letter-spacing: 3px;
+  }
+
+  .section-title::before {
+    content: '▸ ';
+    color: var(--magenta);
+  }
+
+  /* Feature grid */
+  .features {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 24px;
+    margin-bottom: 60px;
+  }
+
+  .feature-card {
+    background: rgba(0, 255, 255, 0.02);
+    border: 1px solid rgba(0, 255, 255, 0.1);
+    border-radius: 6px;
+    padding: 24px;
+    transition: all 0.3s ease;
+  }
+
+  .feature-card:hover {
+    border-color: rgba(0, 255, 255, 0.3);
+    box-shadow: 0 0 20px rgba(0, 255, 255, 0.05);
+  }
+
+  .feature-card h3 {
+    color: var(--cyan);
+    font-size: 1rem;
+    margin-bottom: 10px;
+  }
+
+  .feature-card p {
+    color: var(--gray);
+    font-size: 0.85rem;
+  }
+
+  .feature-card .icon {
+    font-size: 1.5rem;
+    margin-bottom: 12px;
+  }
+
+  /* Code blocks */
+  .code-block {
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(0, 255, 255, 0.1);
+    border-radius: 6px;
+    padding: 20px;
+    margin: 16px 0;
+    overflow-x: auto;
+    font-size: 0.85rem;
+    position: relative;
+  }
+
+  .code-block::before {
+    color: var(--green);
+    display: block;
+    margin-bottom: 8px;
+    font-size: 0.7rem;
+  }
+
+  .code-block.bash::before { content: '$ bash'; color: var(--green); }
+  .code-block.json::before { content: '/* providers.json */'; color: var(--yellow); }
+
+  .code-block code {
+    color: var(--white);
+    white-space: pre;
+  }
+
+  .code-block .comment { color: var(--dark-gray); }
+  .code-block .keyword { color: var(--magenta); }
+  .code-block .string { color: var(--yellow); }
+  .code-block .key { color: var(--cyan); }
+
+  /* Benchmark table */
+  .bench-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 20px 0;
+    font-size: 0.85rem;
+  }
+
+  .bench-table th {
+    color: var(--cyan);
+    text-align: left;
+    padding: 10px 16px;
+    border-bottom: 2px solid rgba(0, 255, 255, 0.2);
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 1px;
+  }
+
+  .bench-table td {
+    padding: 10px 16px;
+    border-bottom: 1px solid rgba(0, 255, 255, 0.05);
+    color: var(--white);
+  }
+
+  .bench-table tr:hover td {
+    background: rgba(0, 255, 255, 0.03);
+  }
+
+  .bench-table .score {
+    color: var(--green);
+    font-weight: 700;
+  }
+
+  /* Commands */
+  .commands-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+    margin: 20px 0;
+  }
+
+  .cmd {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 10px 16px;
+    background: rgba(0, 255, 255, 0.02);
+    border: 1px solid rgba(0, 255, 255, 0.08);
+    border-radius: 4px;
+    font-size: 0.85rem;
+  }
+
+  .cmd code {
+    color: var(--yellow);
+    font-weight: 700;
+    min-width: 120px;
+  }
+
+  .cmd span {
+    color: var(--gray);
+  }
+
+  /* Project structure */
+  .tree {
+    font-size: 0.8rem;
+    color: var(--gray);
+    line-height: 1.8;
+    padding: 20px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(0, 255, 255, 0.1);
+    border-radius: 6px;
+  }
+
+  .tree .dir { color: var(--cyan); }
+  .tree .file { color: var(--white); }
+  .tree .comment { color: var(--dark-gray); }
+
+  /* Footer */
+  .footer {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--dark-gray);
+    font-size: 0.75rem;
+    border-top: 1px solid rgba(0, 255, 255, 0.1);
+  }
+
+  .footer a {
+    color: var(--cyan);
+    text-decoration: none;
+  }
+
+  .footer a:hover {
+    text-shadow: 0 0 8px var(--cyan);
+  }
+
+  /* Responsive */
+  @media (max-width: 640px) {
+    .hero h1 { font-size: 1.5rem; }
+    .logo-ascii { font-size: 6px; }
+    .section { padding: 40px 16px; }
+    .btn { padding: 10px 20px; font-size: 0.75rem; }
+    .status-bar { font-size: 0.6rem; padding: 6px 12px; }
+  }
+</style>
+</head>
+<body>
+
+  <!-- STATUS BAR -->
+  <div class="status-bar">
+    <div class="left"><span class="dot"></span> SYSTEM ONLINE</div>
+    <div class="right">v0.1.1 | model: <span style="color:var(--cyan)">any</span> | license: ISC | by SergeyGuns</div>
+  </div>
+
+  <!-- HERO -->
+  <section class="hero" id="hero">
+    <div class="logo-ascii neon-cyan">          █████ █   █ █   █ ███     ███   ███  █████ █   █ █████
+           ░█░░░ █ █ ░██  █░ █░░   █ ░░█ █ ░░░ █░░░░░██  █░ ░█░░░
+            █░░░░ █ ░ █░█ █░░█░░░  █████░█░ ██░████░░█░█ █░░ █░░░░
+            █░░   █░ ░█░░██░░█░░   █░░░█░█░░ █░█░░░░ █░░██░░ █░░
+            █░░   █░░ █░░ █░███░   █░░░█░░███ ░█████░█░░ █░░ █░░
+             ░░    ░░  ░░  ░░░░░    ░░  ░░ ░░░ ░░░░░░ ░░  ░░  ░░
+              ░     ░   ░   ░ ░░░    ░   ░  ░░░  ░░░░░ ░   ░   ░</div>
+    <h1 class="neon-cyan">tiny-agent</h1>
+    <div class="version">v0.1.1 — Autonomous AI Coding Agent</div>
+    <p class="tagline">
+      Минималистичный фреймворк для создания автономных ИИ-разработчиков на TypeScript.
+      Чистый RLM-протокол, ноль тяжёлых абстракций, полная прозрачность.
+    </p>
+
+    <div class="btn-group">
+      <a href="#install" class="btn btn-primary">Установить</a>
+      <a href="https://www.npmjs.com/package/@sergey-guns/tiny-agent" class="btn btn-secondary" target="_blank" rel="noopener">npm</a>
+      <a href="https://github.com/SergeyGuns/tiny-agent" class="btn btn-secondary" target="_blank" rel="noopener">GitHub</a>
+    </div>
+
+    <div class="install-block">
+      <div class="label">Установка</div>
+      <code>npm install -g @sergey-guns/tiny-agent</code>
+      <div class="aliases">
+        Алиасы: <span>tia</span> · <span>ty</span> · <span>ta</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section class="section" id="features">
+    <h2 class="section-title">Возможности</h2>
+
+    <div class="features">
+      <div class="feature-card">
+        <div class="icon">🧠</div>
+        <h3>RLM Architecture</h3>
+        <p>Recursive Language Model — модель сама решает, сколько вызовов инструментов сделать за один шаг. Результаты агрегируются как батч.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">⚡</div>
+        <h3>Multi-Action</h3>
+        <p>Параллельные независимые вызовы инструментов за один ответ: чтение нескольких файлов, поиск + запись, и т.д.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">🔒</div>
+        <h3>Zero-Dependency Core</h3>
+        <p>Только нативный fetch и стандартная библиотека Node.js. Никаких LangChain, LlamaIndex и других абстракций.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">📡</div>
+        <h3>Любой провайдер</h3>
+        <p>LM Studio, OpenRouter, Anthropic, OpenAI — единый интерфейс. Переключение через <code style="color:var(--yellow)">\provider</code> в TUI.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">🔄</div>
+        <h3>READ ≠ WRITE</h3>
+        <p>Агент не записывает файлы, если его просто попросили прочитать или объяснить. Защита от циклов и саморекурсии.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">📎</div>
+        <h3>@filename TAB</h3>
+        <p>Автодополнение имён файлов в TUI с прикреплением содержимого. Работает с поддиректориями.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- INSTALL -->
+  <section class="section" id="install">
+    <h2 class="section-title">Быстрый старт</h2>
+
+    <div class="code-block bash">
+      <code><span class="comment"># Установка</span>
+npm install -g @sergey-guns/tiny-agent
+
+<span class="comment"># Интерактивный TUI</span>
+tia
+
+<span class="comment"># Автономный режим</span>
+tia <span class="string">"Создай CLI утилиту на Node.js для подсчёта строк кода"</span></code>
+    </div>
+
+    <p style="color:var(--gray); margin:16px 0;">Создайте <code style="color:var(--yellow)">.env</code> в рабочей директории:</p>
+
+    <div class="code-block bash">
+      <code><span class="comment"># LM Studio (локальная модель)</span>
+PROVIDER_URL=http://192.168.0.156:1234/v1
+MODEL_NAME=qwen/qwen3.5-9b
+
+<span class="comment"># Или любой другой OpenAI-совместимый API</span></code>
+    </div>
+
+    <h3 style="color:var(--magenta); margin:30px 0 16px; font-size:1rem;">TUI Команды</h3>
+    <div class="commands-list">
+      <div class="cmd"><code>\plan</code><span>режим планирования</span></div>
+      <div class="cmd"><code>\write</code><span>режим записи</span></div>
+      <div class="cmd"><code>\steps</code><span>история шагов</span></div>
+      <div class="cmd"><code>\expand N</code><span>развернуть шаг N</span></div>
+      <div class="cmd"><code>\provider</code><span>управление моделями</span></div>
+      <div class="cmd"><code>\test</code><span>тестовый вывод</span></div>
+      <div class="cmd"><code>\exit</code><span>выход</span></div>
+      <div class="cmd"><code>@file</code><span>прикрепить файл (TAB)</span></div>
+    </div>
+  </section>
+
+  <!-- ARCHITECTURE -->
+  <section class="section" id="architecture">
+    <h2 class="section-title">Инструменты</h2>
+
+    <div class="features">
+      <div class="feature-card"><h3>search_web</h3><p>Поиск в интернете (DuckDuckGo / Wikipedia)</p></div>
+      <div class="feature-card"><h3>fetch_url_content</h3><p>Извлечение текста из URL</p></div>
+      <div class="feature-card"><h3>list_directory</h3><p>Просмотр структуры файлов</p></div>
+      <div class="feature-card"><h3>read_file_content</h3><p>Чтение исходного кода</p></div>
+      <div class="feature-card"><h3>write_file_content</h3><p>Безопасная запись файлов</p></div>
+      <div class="feature-card"><h3>execute_shell_command</h3><p>Выполнение команд в терминале</p></div>
+      <div class="feature-card"><h3>query_language_model</h3><p>Рекурсивный вызов LLM для анализа</p></div>
+      <div class="feature-card"><h3>decompose_and_execute</h3><p>Декомпозиция сложных задач</p></div>
+    </div>
+
+    <h3 style="color:var(--magenta); margin:30px 0 16px; font-size:1rem;">Структура проекта</h3>
+    <div class="tree">
+      <span class="dir">tiny-agent/</span><br>
+      ├── <span class="file">agent.ts</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment"># TUI, точка входа</span><br>
+      ├── <span class="file">lib.ts</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment"># Barrel re-export</span><br>
+      ├── <span class="file">types.ts</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment"># Общие типы</span><br>
+      ├── <span class="dir">src/</span><br>
+      │&nbsp;&nbsp;├── <span class="file">rlm.ts</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment"># RLM executor</span><br>
+      │&nbsp;&nbsp;├── <span class="file">tools.ts</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment"># Инструменты</span><br>
+      │&nbsp;&nbsp;├── <span class="file">llm.ts</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment"># LLM клиент</span><br>
+      │&nbsp;&nbsp;├── <span class="file">parser.ts</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment"># Парсер Action</span><br>
+      │&nbsp;&nbsp;├── <span class="file">config.ts</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment"># .env, провайдеры</span><br>
+      │&nbsp;&nbsp;└── <span class="file">...</span><br>
+      ├── <span class="dir">bench/</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment"># Бенчмарк</span><br>
+      └── <span class="dir">test/</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment"># Тесты</span>
+    </div>
+  </section>
+
+  <!-- BENCHMARK -->
+  <section class="section" id="benchmark">
+    <h2 class="section-title">Бенчмарк</h2>
+
+    <table class="bench-table">
+      <thead>
+        <tr><th>Версия</th><th>Модель</th><th>Результат</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>v21</td><td>qwen3.5-9b</td><td class="score">87.5% (21/24)</td></tr>
+      </tbody>
+    </table>
+
+    <p style="color:var(--gray); font-size:0.8rem; margin-top:12px;">
+      Категории: terminal · tool_use · research · planning · rlm<br>
+      Сложность: easy · medium · hard · expert
+    </p>
+  </section>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <p>tiny-agent v0.1.1 · ISC License · by <a href="https://github.com/SergeyGuns">SergeyGuns</a></p>
+    <p style="margin-top:8px;">
+      <a href="https://www.npmjs.com/package/@sergey-guns/tiny-agent">npm</a> ·
+      <a href="https://github.com/SergeyGuns/tiny-agent">GitHub</a>
+    </p>
+  </div>
+
+</body>
+</html>
