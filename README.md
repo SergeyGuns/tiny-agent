@@ -1,143 +1,139 @@
-# 🤖 tiny-agent — Minimalist Multi-Agent Development Framework
+# 🤖 tiny-agent — Autonomous AI Coding Agent
 
-Минималистичный фреймворк для создания автономных ИИ-разработчиков на базе TypeScript. Архитектура построена на чистом протоколе **RLM** (Recursive Language Model) без использования тяжелых сторонних абстракций (LangChain / LlamaIndex).
+[![npm](https://img.shields.io/npm/v/@sergey-guns/tiny-agent?color=00ffff&label=npm&logo=npm&logoColor=white)](https://www.npmjs.com/package/@sergey-guns/tiny-agent)
+[![License](https://img.shields.io/badge/license-ISC-ff00ff)](LICENSE)
+[![GitHub](https://img.shields.io/badge/GitHub-SergeyGuns%2Ftiny--agent-0066ff?logo=github)](https://github.com/SergeyGuns/tiny-agent)
 
----
+Автономный ИИ-агент с текстовым TUI. Работает в контексте любой директории — читает файлы, пишет код, выполняет команды, ищет в интернете. Архитектура построена на чистом протоколе **RLM** (Recursive Language Model) без тяжёлых абстракций (LangChain / LlamaIndex).
 
-## 🎯 Основная концепция
-
-Проект доказывает, что для создания надежного ИИ-агента достаточно стандартной библиотеки Node.js и прямых запросов к API модели. Система спроектирована для безопасного написания кода, автоматического тестирования и самокоррекции с жестким контролем изменений через Git.
-
-### Философия разработки:
-
-- **Zero-Dependency Core:** Минимальное количество внешних зависимостей. Только нативный `fetch`.
-- **Полная прозрачность:** Каждое действие и мысль логируются в файл сессии.
-- **Безопасность через транзакции:** Любое действие агента может быть автоматически откачено, если оно ломает проект.
-- **Многовариантность моделей:** Поддержка LM Studio, OpenRouter, Anthropic, OpenAI и других провайдеров через единый интерфейс.
+**[🌐 Сайт](https://sergeyguns.github.io/tiny-agent/) · [📦 npm](https://www.npmjs.com/package/@sergey-guns/tiny-agent) · [💻 GitHub](https://github.com/SergeyGuns/tiny-agent)**
 
 ---
 
 ## ✨ Ключевые возможности
 
-### Архитектура
-- **RLM (Recursive Language Model):** Модель сама решает, сколько вызовов инструментов сделать за один шаг. Результаты агрегируются и подаются обратно как батч.
-- **Многодействие за один шаг:** Агент может вызвать несколько независимых инструментов одновременно (параллельное чтение файлов, поиск + запись и т.д.).
-- **Планирование (Plan Mode):** Агент сначала строит план, затем выполняет его с промежуточными рефлексиями.
-- **Декомпозиция задач:** Сложные задачи разбиваются на атомарные подзадачи через subagent.
-- **Валидация результатов:** Каждый результат инструмента проверяется и корректируется субагентом.
-
-### Инструменты
-- `search_web` — Поиск в интернете (DuckDuckGo / Wikipedia / MCP web-search)
-- `fetch_url_content` — Извлечение текста из URL
-- `list_directory` — Просмотр структуры файлов
-- `read_file_content` — Чтение исходного кода
-- `write_file_content` — Безопасная запись файлов
-- `create_directory` — Создание директорий
-- `write_plan_file` — Запись плана задачи
-- `search_in_files` — Поиск по содержимому файлов
-- `execute_shell_command` — Выполнение команд в терминале
-- `query_language_model` — Рекурсивный вызов LLM (для классификации, анализа)
-- `signal_task_complete` — Сигнал о завершении задачи
-- `decompose_and_execute` — Декомпозиция и выполнение сложных задач
-
-### Пользовательский интерфейс
-- **Текстовый TUI:** Пошаговая цветная визуализация работы в терминале (256-цветный ANSI).
-- **@filename TAB autocomplete:** Автодополнение имен файлов с прикреплением содержимого.
-- **Провайдеры:** Переключение между моделями через `\provider` в TUI.
-- **Прогресс-бар и статус:** Индикация текущего шага, контекста, используемой модели.
-
-### Безопасность
-- **READ ≠ WRITE:** Агент не записывает файлы, если его просто попросили посмотреть/прочитать/объяснить.
-- **Защита от циклов:** Детектор бесконечных циклов (file read loop, search loop).
-- **Защита от саморекурсии:** Исключение LLM из интерактивного режима.
-- **Предупреждение о перезаписи:** Агент предупреждает при попытке перезаписать существующий файл.
+- **RLM Architecture** — модель сама решает, сколько вызовов инструментов сделать за один шаг. Результаты агрегируются как батч.
+- **Multi-Action** — параллельные независимые вызовы инструментов за один ответ.
+- **Zero-Dependency Core** — только нативный `fetch` и стандартная библиотека Node.js.
+- **Любой провайдер** — LM Studio, OpenRouter, Anthropic, OpenAI через единый интерфейс.
+- **READ ≠ WRITE** — агент не записывает файлы, если его просто попросили прочитать или объяснить.
+- **Защита от циклов** — детектор бесконечных циклов, защита от саморекурсии.
+- **@filename TAB** — автодополнение имён файлов в TUI с прикреплением содержимого.
+- **Cyberpunk TUI** — 256-цветный ANSI, прогресс-бары, статус-лог, история шагов.
 
 ---
 
-## 📦 Быстрый старт
+## 📦 Установка
 
-### 1. Требования
-- Node.js v18 или выше
-- Установленный Git в рабочей директории
-- (опционально) LM Studio, Anthropic API key или другой провайдер LLM
+### Через npm (рекомендуется)
 
-### 2. Установка
 ```bash
+npm install -g @sergey-guns/tiny-agent
+```
+
+После установки доступны команды:
+
+| Команда | Описание |
+|---------|----------|
+| `tia` | Интерактивный TUI (основная) |
+| `ty` | Короткий alias |
+| `ta` | Самый короткий alias |
+
+### Из исходников
+
+```bash
+git clone https://github.com/SergeyGuns/tiny-agent.git
+cd tiny-agent
 npm install
+npm run build
 ```
 
-### 3. Настройка окружения
-Создайте `.env` файл или экспортируйте переменные:
+---
 
-**Вариант A: LM Studio (локальная модель)**
+## 🚀 Быстрый старт
+
+### 1. Настройте провайдер
+
+Создайте `.env` в рабочей директории:
+
 ```bash
-export PROVIDER_URL="http://192.168.0.156:1234/v1"
-export MODEL_NAME="qwen/qwen3.5-9b"
+# LM Studio (локальная модель)
+PROVIDER_URL=http://192.168.0.156:1234/v1
+MODEL_NAME=qwen/qwen3.5-9b
+
+# Или любой OpenAI-совместимый API
 ```
 
-**Вариант B: OpenRouter (облачные модели)**
+### 2. Запустите
+
 ```bash
-# Создайте providers.json или используйте \provider в TUI
+# Интерактивный TUI
+tia
+
+# Автономный режим — одна задача
+tia "Создай CLI утилиту на Node.js для подсчёта строк кода"
 ```
 
-**Вариант C: Anthropic (Claude)**
-```bash
-export API_KEY="sk-..."
-export MODEL_NAME="claude-sonnet-4-20250514"
-```
-```
+### 3. TUI Команды
 
-### 4. Запуск
-```bash
-# Компиляция и запуск интерактивного TUI
-npx tsc && node dist/agent.js
+| Команда | Описание |
+|---------|----------|
+| `\plan` | Режим планирования (только чтение/поиск) |
+| `\write` | Режим записи (полный доступ) |
+| `\steps` | История шагов текущей сессии |
+| `\expand N` | Развернуть шаг N |
+| `\provider` | Управление провайдерами/моделями |
+| `\test` | Тестовый вывод (без LLM) |
+| `\exit` | Выход |
+| `@filename` | Прикрепить файл (TAB для автодополнения) |
 
-# Или через npm-скрипт
-npm run tui
-```
+---
 
-### 5. Команды TUI
-- `\provider` — переключить провайдер/модель
-- `\test` — запуск тестов
-- `\steps` — показать шаги текущей сессии
-- `\expand N` — развернуть шаг N
-- `@filename` — прикрепить файл к сообщению (TAB для автодополнения)
+## 🛠️ Инструменты
+
+| Инструмент | Описание |
+|------------|----------|
+| `search_web` | Поиск в интернете (DuckDuckGo / Wikipedia) |
+| `fetch_url_content` | Извлечение текста из URL |
+| `list_directory` | Просмотр структуры файлов |
+| `read_file_content` | Чтение исходного кода |
+| `write_file_content` | Безопасная запись файлов |
+| `create_directory` | Создание директорий |
+| `search_in_files` | Поиск по содержимому файлов |
+| `execute_shell_command` | Выполнение команд в терминале |
+| `query_language_model` | Рекурсивный вызов LLM (классификация, анализ) |
+| `signal_task_complete` | Сигнал о завершении задачи |
+| `decompose_and_execute` | Декомпозиция и выполнение сложных задач |
 
 ---
 
 ## 🧪 Тестирование
 
 ```bash
-# Юнит-тесты (библиотека)
+# Юнит-тесты
 npm test
 
-# TUI-тесты (интеграционные)
+# TUI-тесты
 npm run test:tui
 
 # Все тесты
 npm run test:all
-
-# Конкретный тест
-node --test dist/test/rlm.test.js
 ```
 
-### Структура тестов:
-- `test/lib.test.ts` — Юнит-тесты инструментов (list_directory, read_file_content, write_file_content)
-- `test/rlm.test.ts` — Тесты RLM-цикла (35 тестов, включая loop detection, классификаторы)
-- `test/tui.test.ts` — TUI-тесты (25 кейсов, 5 категорий: CHAT/READ/WRITE/MULTI/EDGE)
+Структура тестов:
+- `test/lib.test.ts` — юнит-тесты инструментов
+- `test/rlm.test.ts` — тесты RLM-цикла (35 тестов)
+- `test/tui.test.ts` — TUI интеграционные тесты (25 кейсов)
 
 ---
 
 ## 📊 Бенчмарк
-
-Запуск оценки производительности на наборе задач:
 
 ```bash
 # Полный бенчмарк
 npm run bench
 
 # По категории
-npm run bench:unit
 npm run bench:category -- terminal
 npm run bench:category -- research
 
@@ -145,18 +141,11 @@ npm run bench:category -- research
 npm run bench:task -- T-001
 ```
 
-### Категории задач:
-- **terminal** — Файловые операции (Terminal-Bench style)
-- **tool_use** — Использование инструментов (Tau-Bench style)
-- **research** — Многошаговое исследование (GAIA style)
-- **planning** — Планирование и декомпозиция
-- **rlm** — Рекурсивные вызовы LLM
+| Версия | Модель | Результат |
+|--------|--------|-----------|
+| v21 | qwen3.5-9b | 87.5% (21/24) |
 
-### Сложность:
-- `easy` — простые задачи (вес 1)
-- `medium` — средние (вес 2)
-- `hard` — сложные (вес 3)
-- `expert` — экспертные (вес 5)
+Категории: `terminal` · `tool_use` · `research` · `planning` · `rlm`
 
 ---
 
@@ -164,32 +153,27 @@ npm run bench:task -- T-001
 
 ```
 tiny-agent/
-├── agent.ts              # Точка входа: TUI, @filename autocomplete, провайдеры
-├── lib.ts                # Barrel re-export (обратная совместимость)
-├── types.ts              # Общие типы (Message, ToolCallRecord, ReActState)
+├── agent.ts              # Точка входа: TUI, @filename autocomplete
+├── lib.ts                # Barrel re-export
+├── types.ts              # Общие типы
+├── bin/
+│   └── tiny-agent.js     # CLI entry point (shebang)
 ├── src/
-│   ├── rlm.ts            # RLM executor: multi-action, loop detection, classifiers
+│   ├── rlm.ts            # RLM executor: multi-action, loop detection
 │   ├── tools.ts          # Реализация всех инструментов
-│   ├── llm.ts            # LLM клиент: queryLLM, классификаторы, профили
-│   ├── prompt.ts         # Системные промпты (BENCH_SYSTEM_PROMPT)
+│   ├── llm.ts            # LLM клиент: queryLLM, классификаторы
+│   ├── prompt.ts         # Системные промпты
 │   ├── parser.ts         # Парсер Action: toolName[{...}]
-│   ├── config.ts         # Конфигурация: .env, провайдеры, значения по умолчанию
-│   ├── provider.ts       # Управление провайдерами (add/list/use/remove)
-│   ├── search.ts         # Поиск: Wikipedia API, перевод RU→EN
-│   ├── html.ts           # HTML → text extraction, DuckDuckGo parser
-│   ├── mcp-client.ts     # MCP (Model Context Protocol) stdio клиент
-│   ├── task-decomposer.ts # Декомпозиция задач на подзадачи
-│   ├── with-subagent.ts  # Валидация результатов через субагента
-│   └── format-specs.ts   # Динамические спецификации форматов файлов
-├── bench/
-│   ├── runner.ts         # Benchmark runner: подготовка, выполнение, оценка
-│   ├── types.ts          # Типы бенчмарка (Task, EvalContext, BenchmarkReport)
-│   └── tasks/            # Набор задач по категориям
-├── test/
-│   ├── lib.test.ts       # Юнит-тесты инструментов
-│   ├── rlm.test.ts       # Тесты RLM-цикла
-│   ├── tui.test.ts       # TUI интеграционные тесты
-│   └── tui-cases.ts      # TUI тест-кейсы
+│   ├── config.ts         # Конфигурация: .env, провайдеры
+│   ├── provider.ts       # Управление провайдерами
+│   ├── search.ts         # Поиск: Wikipedia, перевод RU→EN
+│   ├── html.ts           # HTML → text extraction
+│   ├── mcp-client.ts     # MCP (Model Context Protocol) клиент
+│   ├── task-decomposer.ts # Декомпозиция задач
+│   └── with-subagent.ts  # Валидация через субагента
+├── bench/                # Бенчмарк
+├── test/                 # Тесты
+├── docs/                 # GitHub Pages
 ├── package.json
 └── tsconfig.json
 ```
@@ -201,7 +185,7 @@ tiny-agent/
 ### Переменные окружения (.env)
 
 | Переменная | По умолчанию | Описание |
-|---|---|---|
+|------------|--------------|----------|
 | `PROVIDER_URL` | `http://localhost:1234/v1` | URL провайдера LLM |
 | `MODEL_NAME` | `qwen/qwen3.5-9b` | Модель по умолчанию |
 | `API_KEY` | — | API ключ (если требуется) |
@@ -209,46 +193,45 @@ tiny-agent/
 | `RETRIES` | `3` | Повторы при ошибке LLM |
 | `TEMPERATURE` | `0.7` | Температура генерации |
 
-### Провайдеры (providers.json)
+### Провайдеры
 
-Можно сохранять конфигурации провайдеров:
-```json
-[
-  { "name": "lm-studio", "url": "http://192.168.0.156:1234/v1", "model": "qwen/qwen3.5-9b" },
-  { "name": "openrouter", "url": "https://openrouter.ai/api/v1", "model": "google/gemini-2.0-flash-001", "apiKey": "sk-or-..." }
-]
-```
+Переключайте модели через TUI: `\provider`
 
 ---
 
 ## 📝 Пример сессии
 
 ```
-╔══════════════════════════════════════════╗
-║  🤖 tiny-agent v0.1.1                   ║
-║  Model: qwen/qwen3.5-9b                 ║
-╚══════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════════════════════╗
+║   tiny-agent                                                                 ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 
-> Прочитай README.md и расскажи о структуре
+┌─────────────────────────────────  COMMANDS  ─────────────────────────────────┐
+│ \plan     — planning mode (read/search only)                                 │
+│ \write    — write mode (full access)                                         │
+│ \steps    — show step history                                                │
+│ @file     — attach file content (TAB autocomplete)                           │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-[1/50] 256k/128k  ▸ assistant
-  📎 README.md
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  SYSTEM STATUS  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ MODEL: qwen/qwen3.5-9b   MODE: WRITE   DIR: /home/user/project              ┃
+┃ GIT: main   CTX: 0/128k                                                      ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
-Структура проекта tiny-agent:
-- agent.ts — точка входа с TUI...
-- src/rlm.ts — RLM executor...
+│ [WRITE] │ > Прочитай src/lib.ts и расскажи о структуре
+
+  ▸ 1/50  ████████░░░░░░░░░░░░ 25%
+  1 ▸ File src/lib.ts read successfully (23 lines)
+
+  🤖 ОТВЕТ АССИСТЕНТА
+  ────────────────────────────────────────────────────────────────────────────
+  src/lib.ts — это barrel re-export файл. Он реэкспортирует все основные
+  модули из src/: rlm.ts, tools.ts, llm.ts, parser.ts, config.ts, и т.д.
+  ────────────────────────────────────────────────────────────────────────────
 ```
-
----
-
-## 🏆 Результаты бенчмарка
-
-| Версия | Модель | Результат |
-|---|---|---|
-| v21 | qwen3.5-9b | 87.5% (21/24) |
 
 ---
 
 ## 📄 Лицензия
 
-ISC
+ISC · by [SergeyGuns](https://github.com/SergeyGuns)
