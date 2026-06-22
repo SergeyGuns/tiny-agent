@@ -651,6 +651,55 @@ MODEL_NAME=qwen/qwen3.5-9b
     </div>
   </section>
 
+  <!-- OPENROUTER -->
+  <section class="section" id="openrouter">
+    <h2 class="section-title">OpenRouter — облачные модели</h2>
+
+    <p style="color:var(--gray); margin-bottom:24px;">
+      OpenRouter — единый API-шлюз к десяткам моделей. Есть бесплатные модели с суффиксом <code style="color:var(--yellow)">:free</code>.
+    </p>
+
+    <h3 style="color:var(--magenta); margin:20px 0 12px; font-size:0.9rem;">Как подключить</h3>
+    <div class="code-block bash">
+      <code><span class="comment"># 1. Зарегистрируйся на openrouter.ai</span>
+<span class="comment"># 2. Создай API-ключ: openrouter.ai/keys → Create Key</span>
+<span class="comment"># 3. Настрой в tiny-agent:</span>
+
+<span class="comment"># Вариант A: через TUI</span>
+\provider add
+<span class="comment"># Name: openrouter</span>
+<span class="comment"># URL: https://openrouter.ai/api/v1</span>
+<span class="comment"># API Key: sk-or-...</span>
+<span class="comment"># Model: google/gemini-2.0-flash-001:free</span>
+
+\provider use openrouter
+
+<span class="comment"># Вариант B: через .env</span>
+PROVIDER_URL=https://openrouter.ai/api/v1
+MODEL_NAME=google/gemini-2.0-flash-001:free
+API_KEY=sk-or-...</code>
+    </div>
+
+    <h3 style="color:var(--magenta); margin:30px 0 12px; font-size:0.9rem;">Бесплатные модели</h3>
+    <table class="bench-table">
+      <thead>
+        <tr><th>Модель</th><th>Контекст</th><th>Особенности</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>google/gemini-2.0-flash-001:free</td><td>1M</td><td>Быстрая, хорошая для кода</td></tr>
+        <tr><td>google/gemini-2.5-flash-preview:free</td><td>1M</td><td>Новая Gemini, мощная</td></tr>
+        <tr><td>mistralai/mistral-7b-instruct:free</td><td>32K</td><td>Легкая, быстрая</td></tr>
+        <tr><td>meta-llama/llama-3.3-70b-instruct:free</td><td>131K</td><td>Большая модель</td></tr>
+        <tr><td>qwen/qwen-2.5-7b-instruct:free</td><td>128K</td><td>Хорошая для русского</td></tr>
+        <tr><td>openrouter/auto:free</td><td>—</td><td>Автовыбор лучшей</td></tr>
+      </tbody>
+    </table>
+
+    <p style="color:var(--gray); font-size:0.75rem; margin-top:12px;">
+      ⚠ Лимит ~200 запросов/день. Для активной работы — пополни баланс $5-10 на <a href="https://openrouter.ai/credits" style="color:var(--cyan)" target="_blank" rel="noopener">openrouter.ai/credits</a>
+    </p>
+  </section>
+
   <!-- ARCHITECTURE -->
   <section class="section" id="architecture">
     <h2 class="section-title">Инструменты</h2>
