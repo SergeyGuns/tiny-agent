@@ -1,12 +1,27 @@
 {
   "name": "tiny-agent",
   "version": "0.1.1",
+  "description": "Autonomous AI coding agent with TUI — runs in the context of any directory",
   "type": "module",
   "license": "ISC",
+  "bin": {
+    "tiny-agent": "./bin/tiny-agent.js",
+    "tia": "./bin/tiny-agent.js",
+    "ty": "./bin/tiny-agent.js",
+    "ta": "./bin/tiny-agent.js"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    "lib.ts",
+    "types.ts",
+    "agent.ts",
+    "strategies.ts",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
-    "start": "tsc && node dist/agent.js",
-    "tui": "tsc && node dist/agent.js",
+    "start": "node dist/agent.js",
     "clean": "node -e \"const fs = require('fs'); ['dist', 'session.log', 'bench-report.json'].forEach(p => fs.existsSync(p) && fs.rmSync(p, {recursive: true}))\"",
     "test": "npx tsc ; node --test --test-force-exit dist/test/lib.test.js",
     "test:tui": "node --test --test-timeout=120000 --test-force-exit dist/test/tui.test.js",
@@ -14,7 +29,8 @@
     "bench": "npx tsc ; node dist/bench/runner.js",
     "bench:unit": "npm test",
     "bench:category": "npx tsc ; node dist/bench/runner.js --category",
-    "bench:task": "npx tsc ; node dist/bench/runner.js --task"
+    "bench:task": "npx tsc ; node dist/bench/runner.js --task",
+    "prepublishOnly": "npm run build"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
