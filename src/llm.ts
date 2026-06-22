@@ -27,8 +27,8 @@ export const LLM_PROFILES = {
 export type LLMProfileName = keyof typeof LLM_PROFILES;
 
 export async function queryLLM(messages: Message[], options?: LLMOptions, retries = DEFAULT_RETRIES): Promise<string> {
-  const baseUrl = process.env.LM_STUDIO_URL || 'http://localhost:1234/v1';
-  const modelName = process.env.LM_STUDIO_MODEL || 'local-model';
+  const baseUrl = process.env.PROVIDER_URL || 'http://localhost:1234/v1';
+  const modelName = process.env.MODEL_NAME || 'local-model';
 
   const temperature = options?.temperature ?? DEFAULT_TEMPERATURE;
   const max_tokens = options?.max_tokens ?? 800;

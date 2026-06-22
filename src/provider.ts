@@ -142,8 +142,8 @@ export function providerRemove(name: string): void {
 
   const active = getActiveProvider();
   if (active?.name === name) {
-    process.env.LM_STUDIO_URL = '';
-    process.env.LM_STUDIO_MODEL = '';
+    process.env.PROVIDER_URL = '';
+    process.env.MODEL_NAME = '';
   }
 
   providers.splice(idx, 1);

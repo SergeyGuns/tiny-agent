@@ -252,7 +252,7 @@ function getGitBranch(): string {
 }
 
 export function getModelName(): string {
-  return process.env.LM_STUDIO_MODEL || 'local-model';
+  return process.env.MODEL_NAME || 'local-model';
 }
 
 export function updateContextLength(messages: Message[]): void {

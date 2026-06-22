@@ -21,8 +21,8 @@ export function loadEnv(): void {
 
 // ─── LLM defaults ──────────────────────────────────────────────
 
-export const DEFAULT_LM_STUDIO_URL = 'http://localhost:1234/v1';
-export const DEFAULT_LM_STUDIO_MODEL = 'qwen/qwen3.5-9b';
+export const DEFAULT_PROVIDER_URL = 'http://localhost:1234/v1';
+export const DEFAULT_MODEL_NAME = 'qwen/qwen3.5-9b';
 export const DEFAULT_MAX_STEPS = 50;
 export const DEFAULT_RETRIES = 3;
 export const DEFAULT_TEMPERATURE = 0.7;
@@ -58,18 +58,18 @@ export function saveProviders(providers: Provider[]): void {
 }
 
 export function getActiveProvider(): Provider | null {
-  const url = process.env.LM_STUDIO_URL;
-  const model = process.env.LM_STUDIO_MODEL;
+  const url = process.env.PROVIDER_URL;
+  const model = process.env.MODEL_NAME;
   if (!url || !model) return null;
   const providers = loadProviders();
   return providers.find(p => p.url === url && p.model === model) ?? null;
 }
 
 export function setActiveProvider(provider: Provider): void {
-  process.env.LM_STUDIO_URL = provider.url;
-  process.env.LM_STUDIO_MODEL = provider.model;
-  if (provider.apiKey) process.env.OPENAI_API_KEY = provider.apiKey;
-  else delete process.env.OPENAI_API_KEY;
+  process.env.PROVIDER_URL = provider.url;
+  process.env.MODEL_NAME = provider.model;
+  if (provider.apiKey) process.env.API_KEY = provider.apiKey;
+  else delete process.env.API_KEY;
   writeEnvFile(provider);
 }
 
@@ -79,7 +79,7 @@ function writeEnvFile(provider: Provider): void {
   try { content = fs.readFileSync(envPath, 'utf-8'); } catch { /* no .env yet */ }
 
   const lines = content.split('\n');
-  const keys = ['LM_STUDIO_URL', 'LM_STUDIO_MODEL', 'OPENAI_API_KEY'];
+  const keys = ['PROVIDER_URL', 'MODEL_NAME', 'API_KEY'];
   const newLines: string[] = [];
 
   const existing = new Map<string, string>();
@@ -91,10 +91,10 @@ function writeEnvFile(provider: Provider): void {
     existing.set(trimmed.slice(0, eqIdx).trim(), trimmed.slice(eqIdx + 1).trim());
   }
 
-  existing.set('LM_STUDIO_URL', provider.url);
-  existing.set('LM_STUDIO_MODEL', provider.model);
-  if (provider.apiKey) existing.set('OPENAI_API_KEY', provider.apiKey);
-  else existing.delete('OPENAI_API_KEY');
+  existing.set('PROVIDER_URL', provider.url);
+  existing.set('MODEL_NAME', provider.model);
+  if (provider.apiKey) existing.set('API_KEY', provider.apiKey);
+  else existing.delete('API_KEY');
 
   for (const key of keys) {
     const val = existing.get(key);

@@ -468,21 +468,21 @@ describe('TUI edge cases', () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe('getModelName', () => {
-  const origModel = process.env.LM_STUDIO_MODEL;
+  const origModel = process.env.MODEL_NAME;
 
   afterEach(() => {
-    if (origModel === undefined) delete process.env.LM_STUDIO_MODEL;
-    else process.env.LM_STUDIO_MODEL = origModel;
+    if (origModel === undefined) delete process.env.MODEL_NAME;
+    else process.env.MODEL_NAME = origModel;
   });
 
-  it('returns default when LM_STUDIO_MODEL is unset', () => {
-    delete process.env.LM_STUDIO_MODEL;
+  it('returns default when MODEL_NAME is unset', () => {
+    delete process.env.MODEL_NAME;
     // Note: module-level env is already loaded, getModelName reads at call time
     assert.strictEqual(getModelName(), 'local-model');
   });
 
   it('returns custom model from env', () => {
-    process.env.LM_STUDIO_MODEL = 'custom-model';
+    process.env.MODEL_NAME = 'custom-model';
     assert.strictEqual(getModelName(), 'custom-model');
   });
 });
