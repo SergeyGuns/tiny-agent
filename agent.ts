@@ -3,7 +3,7 @@ import * as readline from 'readline/promises';
 import { stdin as input, stdout as output } from 'process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { loadEnv, DEFAULT_MAX_STEPS } from './lib.js';
+import { loadEnv, DEFAULT_MAX_STEPS, checkAPIAvailability } from './lib.js';
 import { runAgentLoop, runPlanLoop, INTERACTIVE_TOOLS } from './lib.js';
 import type { Message } from './types.js';
 import { providerAdd, providerList, providerUse, providerRemove } from './src/provider.js';
@@ -516,6 +516,28 @@ export async function startTUI(rl?: readline.Interface) {
 
   displayStatus();
   console.log();
+
+  // ─── API HEALTH CHECK ──────────────────────────────────────
+  const apiUrl = process.env.PROVIDER_URL;
+  const apiModel = process.env.MODEL_NAME;
+  if (apiUrl && apiModel) {
+    const health = await checkAPIAvailability(apiUrl, apiModel, process.env.API_KEY);
+    if (health.ok) {
+      console.log(`${C.green}✔ API: ${health.message}${C.reset}`);
+    } else {
+      console.log(`${C.yellow}⚠ API: ${health.message}${C.reset}`);
+      if (health.hint) {
+        console.log(`${C.dim}${health.hint.split('\n').map(l => '  ' + l).join('\n')}${C.reset}`);
+      }
+      console.log();
+    }
+  } else {
+    console.log(`${C.red}✘ LLM не настроен${C.reset}`);
+    console.log(`${C.dim}  Используйте \\provider add или создайте .env${C.reset}`);
+    console.log(`${C.dim}  PROVIDER_URL=http://localhost:1234/v1${C.reset}`);
+    console.log(`${C.dim}  MODEL_NAME=qwen/qwen3.5-9b${C.reset}`);
+    console.log();
+  }
 
   while (true) {
     const modeColor = currentMode === 'plane' ? C.blue : C.green;

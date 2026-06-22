@@ -1,7 +1,183 @@
-import { LLM_TIMEOUT_MS, DEFAULT_RETRIES, RETRY_BASE_DELAY_MS, UNLOADED_RETRY_DELAY_MS, DEFAULT_TEMPERATURE } from './config.js';
+import { LLM_TIMEOUT_MS, DEFAULT_RETRIES, RETRY_BASE_DELAY_MS, UNLOADED_RETRY_DELAY_MS, DEFAULT_TEMPERATURE, FETCH_TIMEOUT_MS } from './config.js';
 import type { Message } from '../types.js';
 import { toolSchemas } from './tools.js';
 import { stripThinkingTags } from './parser.js';
+
+// ─── API Health Check ───────────────────────────────────────────
+
+export interface HealthCheckResult {
+  ok: boolean;
+  status: 'ready' | 'no_models' | 'unreachable' | 'auth_error' | 'timeout' | 'error';
+  message: string;
+  hint: string;
+  availableModels?: string[];
+}
+
+/**
+ * Multi-level API availability check with useful hints.
+ * 1. DNS/connection — is the host reachable?
+ * 2. HTTP response — does it return valid status?
+ * 3. /v1/models — does it expose models?
+ * 4. Model validation — is the configured model in the list?
+ */
+export async function checkAPIAvailability(baseUrl: string, modelName: string, apiKey?: string): Promise<HealthCheckResult> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+
+  // Level 1: TCP/HTTP connectivity
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl}/v1/models`, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch (e: unknown) {
+    const errMsg = e instanceof Error ? e.message : String(e);
+    if (errMsg.includes('timeout') || errMsg.includes('Timeout')) {
+      return {
+        ok: false,
+        status: 'timeout',
+        message: `Сервер ${baseUrl} не отвечает (таймаут 5с)`,
+        hint: 'Проверьте:\n  1. Запущен ли провайдер (LM Studio / Ollama / OpenRouter)?\n  2. Правильный ли URL в PROVIDER_URL?\n  3. Не блокирует ли файрвол соединение?',
+      };
+    }
+    if (errMsg.includes('ECONNREFUSED') || errMsg.includes('refused')) {
+      return {
+        ok: false,
+        status: 'unreachable',
+        message: `Сервер ${baseUrl} отклоняет соединение`,
+        hint: 'Проверьте:\n  1. Запущен ли провайдер? Если LM Studio — нажмите "Start Server".\n  2. Правильный ли порт? LM Studio по умолчанию :1234, Ollama :11434.\n  3. Не занят ли порт другой программой?',
+      };
+    }
+    if (errMsg.includes('ENOTFOUND') || errMsg.includes('getaddrinfo')) {
+      return {
+        ok: false,
+        status: 'unreachable',
+        message: `Хост ${baseUrl} не найден (DNS)`,
+        hint: 'Проверьте:\n  1. Правильно ли указан hostname?\n  2. Доступен ли он из сети? Попробуйте curl в терминале.\n  3. Если туннель/VPN — активен ли он?',
+      };
+    }
+    return {
+      ok: false,
+      status: 'error',
+      message: `Ошибка соединения: ${errMsg}`,
+      hint: 'Проверьте сетевое подключение и правильность URL.',
+    };
+  }
+
+  // Level 2: HTTP status
+  if (res.status === 401 || res.status === 403) {
+    return {
+      ok: false,
+      status: 'auth_error',
+      message: `Ошибка авторизации (HTTP ${res.status})`,
+      hint: 'Проверьте:\n  1. Правильный ли API_KEY в .env или providers.json?\n  2. Если провайдер требует ключ — задан ли он?\n  3. Не истёк ли ключ?',
+    };
+  }
+
+  if (res.status === 404) {
+    return {
+      ok: false,
+      status: 'error',
+      message: `Эндпоинт /v1/models не найден (HTTP 404)`,
+      hint: 'Проверьте:\n  1. Поддерживает ли провайдер OpenAI-совместимый API?\n  2. Правильный ли URL? Должен заканчиваться на /v1.\n  3. Попробуйте: curl <URL>/v1/models',
+    };
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    return {
+      ok: false,
+      status: 'error',
+      message: `Сервер вернул HTTP ${res.status}: ${text.substring(0, 100)}`,
+      hint: 'Проверьте логи провайдера. Возможно, сервер перегружен или настроен неверно.',
+    };
+  }
+
+  // Level 3: Parse models list
+  let models: string[] = [];
+  try {
+    const data = await res.json() as { data?: Array<{ id?: string }> };
+    models = (data.data ?? []).map(m => m.id).filter(Boolean) as string[];
+  } catch {
+    return {
+      ok: false,
+      status: 'error',
+      message: 'Сервер ответил, но формат не соответствует OpenAI API',
+      hint: 'Проверьте:\n  1. Поддерживает ли провайдер /v1/models в формате OpenAI?\n  2. Не проксируется ли запрос через несовместимый сервис?',
+    };
+  }
+
+  if (models.length === 0) {
+    // Some providers (Anthropic-compatible) don't expose /v1/models
+    // Try a lightweight request to /chat/completions to verify the model works
+    try {
+      const testRes = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: modelName,
+          messages: [{ role: 'user', content: 'hi' }],
+          max_tokens: 1,
+        }),
+        signal: AbortSignal.timeout(5000),
+      });
+      if (testRes.ok || testRes.status === 400) {
+        // 400 might mean "model exists but request is malformed" — still OK
+        return {
+          ok: true,
+          status: 'ready',
+          message: 'API доступен (список моделей скрыт, но запросы работают)',
+          hint: '',
+        }
+      }
+    } catch { /* fall through */ }
+
+    return {
+      ok: false,
+      status: 'no_models',
+      message: 'Сервер не вернул список моделей',
+      hint: 'Проверьте:\n  1. Загружена ли модель в LM Studio? Нажмите на модель в баре → Load.\n  2. Если Ollama — выполните: ollama pull <model-name>\n  3. Если провайдер не поддерживает /v1/models — проверьте вручную через curl.',
+    };
+  }
+
+  // Level 4: Model validation
+  if (!models.includes(modelName)) {
+    // Try fuzzy match (e.g. "qwen3.5-9b" might be listed as "qwen/qwen3.5-9b")
+    const similar = models.filter(m =>
+      m.toLowerCase().includes(modelName.toLowerCase().split('/').pop() || '') ||
+      modelName.toLowerCase().includes(m.toLowerCase().split('/').pop() || '')
+    );
+
+    const hintBase = `Модель "${modelName}" не найдена в списке (${models.length} доступно).`;
+    let hintAction: string;
+
+    if (similar.length > 0) {
+      hintAction = `\nПохожие модели:\n${similar.map(m => `  - ${m}`).join('\n')}\n\nПопробуйте:\n  \\provider use <name>  с правильной моделью\n  Или отредактируйте MODEL_NAME в .env`;
+    } else {
+      hintAction = `\nДоступные модели:\n${models.slice(0, 10).map(m => `  - ${m}`).join('\n')}${models.length > 10 ? `\n  ... и ещё ${models.length - 10}` : ''}\n\nПопробуйте:\n  \\provider use <name>  с правильной моделью\n  Или отредактируйте MODEL_NAME в .env`;
+    }
+
+    return {
+      ok: false,
+      status: 'error',
+      message: hintBase,
+      hint: hintAction,
+      availableModels: models,
+    };
+  }
+
+  return {
+    ok: true,
+    status: 'ready',
+    message: 'API доступен, модель найдена',
+    hint: '',
+    availableModels: models,
+  };
+}
+
+// ─── Query LLM ─────────────────────────────────────────────────
 
 export interface LLMOptions {
   temperature?: number;
@@ -27,8 +203,25 @@ export const LLM_PROFILES = {
 export type LLMProfileName = keyof typeof LLM_PROFILES;
 
 export async function queryLLM(messages: Message[], options?: LLMOptions, retries = DEFAULT_RETRIES): Promise<string> {
-  const baseUrl = process.env.PROVIDER_URL || 'http://localhost:1234/v1';
-  const modelName = process.env.MODEL_NAME || 'local-model';
+  const baseUrl = process.env.PROVIDER_URL;
+  const modelName = process.env.MODEL_NAME;
+
+  if (!baseUrl || !modelName) {
+    throw new Error(
+      'LLM не настроен.\n' +
+      '  Создайте .env или используйте \\provider add:\n\n' +
+      '  PROVIDER_URL=http://localhost:1234/v1\n' +
+      '  MODEL_NAME=qwen/qwen3.5-9b\n\n' +
+      '  Или в TUI: \\provider add'
+    );
+  }
+
+  // Validate API availability on first call (no tools in classifier calls)
+  const apiKey = process.env.API_KEY;
+  const health = await checkAPIAvailability(baseUrl, modelName, apiKey);
+  if (!health.ok) {
+    throw new Error(`${health.message}\n\n${health.hint}`);
+  }
 
   const temperature = options?.temperature ?? DEFAULT_TEMPERATURE;
   const max_tokens = options?.max_tokens ?? 800;

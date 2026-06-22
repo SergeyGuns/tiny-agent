@@ -16,6 +16,7 @@ export type { DdgResult } from './src/html.js';
 export { loadEnv, DEFAULT_MAX_STEPS, loadProviders, saveProviders, getActiveProvider, setActiveProvider } from './src/config.js';
 export type { Provider } from './src/config.js';
 export { providerAdd, providerList, providerUse, providerRemove, fetchModels } from './src/provider.js';
+export { checkAPIAvailability, type HealthCheckResult } from './src/llm.js';
 
 // Parser utilities (exported for tests)
 export { parseAction, parseAllActions, parseWriteFileArgs } from './src/parser.js';
