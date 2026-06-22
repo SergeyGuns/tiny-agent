@@ -89,6 +89,66 @@ tia "Создай CLI утилиту на Node.js для подсчёта стр
 
 ---
 
+## 🌐 OpenRouter (облачные модели)
+
+OpenRouter — это единый API-шлюз к десяткам моделей от разных провайдеров. Поддерживает бесплатные модели.
+
+### 1. Регистрация и API-ключ
+
+1. Зайди на [openrouter.ai](https://openrouter.ai) и зарегистрируйся (можно через GitHub)
+2. Перейди в [Keys](https://openrouter.ai/keys) → **Create Key**
+3. Скопируй ключ — он начинается с `sk-or-...`
+
+### 2. Настройка в tiny-agent
+
+**Вариант A: через TUI**
+```
+\provider add
+```
+Введи:
+- Name: `openrouter`
+- URL: `https://openrouter.ai/api/v1`
+- API Key: `sk-or-...`
+- Model: `google/gemini-2.0-flash-001:free`
+
+Затем выбери:
+```
+\provider use openrouter
+```
+
+**Вариант B: через .env**
+```bash
+PROVIDER_URL=https://openrouter.ai/api/v1
+MODEL_NAME=google/gemini-2.0-flash-001:free
+API_KEY=sk-or-...
+```
+
+### 3. Бесплатные модели
+
+OpenRouter предоставляет бесплатные модели (суффикс `:free`). Вот лучшие на 2026:
+
+| Модель | Контекст | Особенности |
+|--------|----------|-------------|
+| `google/gemini-2.0-flash-001:free` | 1M | Быстрая, хорошая для кода |
+| `google/gemini-2.5-flash-preview:free` | 1M | Новая Gemini, мощная |
+| `mistralai/mistral-7b-instruct:free` | 32K | Легкая, быстрая |
+| `meta-llama/llama-3.3-70b-instruct:free` | 131K | Большая модель, медленнее |
+| `qwen/qwen-2.5-7b-instruct:free` | 128K | Хорошая для русского |
+| `openrouter/auto:free` | — | Автовыбор лучшей бесплатной |
+
+> **Лимиты:** бесплатные модели имеют rate limit ~200 запросов/день. Для активной работы — пополни баланс $5-10.
+
+### 4. Платные модели (по желанию)
+
+Если нужна максимальная мощность:
+- `anthropic/claude-sonnet-4` — лучшая для кода
+- `openai/gpt-4o` — универсальная
+- `google/gemini-2.5-pro` — самый длинный контекст
+
+Стоимость: $0.5-10 за 1M токенов. Пополнить на [openrouter.ai/credits](https://openrouter.ai/credits).
+
+---
+
 ## 🛠️ Инструменты
 
 | Инструмент | Описание |
