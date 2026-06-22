@@ -1,11 +1,10 @@
 {
-  "name": "tiny-agent",
+  "name": "@sergey-guns/tiny-agent",
   "version": "0.1.1",
   "description": "Autonomous AI coding agent with TUI — runs in the context of any directory",
   "type": "module",
   "license": "ISC",
   "bin": {
-    "tiny-agent": "./bin/tiny-agent.js",
     "tia": "./bin/tiny-agent.js",
     "ty": "./bin/tiny-agent.js",
     "ta": "./bin/tiny-agent.js"
